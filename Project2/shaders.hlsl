@@ -8,6 +8,12 @@
 // PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.
 //
 //*********************************************************
+
+
+Texture2D gScribbleMap : register(t0);
+
+SamplerState gsamAnisotropicWrap : register(s0);
+
 // C++ 코드에서 gConstantBufferData에 들어있는 내용이 채워진다.
 cbuffer ObjectConstantBuffer : register(b0)
 {
@@ -28,9 +34,6 @@ struct Material
     float3 fresnelR0;
     float shininess;
 };
-
-SamplerState gsamAnisotropicWrap : register(s0);
-Texture2D gScribbleMap : register(t0);
 
 PSInput VSMain(float4 position : POSITION, float3 normal : NORMAL, float2 tex : TEXCOORD)
 {
@@ -67,5 +70,6 @@ float4 PSMain(PSInput input) : SV_TARGET
     float4 resultColor = ambient + directLight;
     resultColor.a = diffuseAlbedo.a;
 
-    return resultColor;
+    //return resultColor;
+    return gScribbleMap.Sample(gsamAnisotropicWrap, input.tex);
 }

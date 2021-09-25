@@ -109,6 +109,9 @@ ID3D12DescriptorHeap* gDsvHeap = nullptr;
 ID3D12DescriptorHeap* gCbvHeap = nullptr;
 ID3D12DescriptorHeap* gSrvHeap = nullptr;
 
+Microsoft::WRL::ComPtr<ID3D12Resource> gScribbleTexComPtr;
+Microsoft::WRL::ComPtr<ID3D12Resource> gScribbleTexUploadHeapComPtr;
+
 // rtv, dsv, cbv 힙의 크기
 UINT gRtvHeapSize = 0;
 UINT gDsvHeapSize = 0;
@@ -178,8 +181,6 @@ UINT gIndexCount;
 
 ID3D12RootSignature* gRootSignature = nullptr;
 ID3D12PipelineState* gPSO = nullptr;
-
-ID3D12Resource* gScribbleTex = nullptr;
 
 // 초기화
 void CreateRootSignature();
@@ -363,13 +364,13 @@ HRESULT InitD3D(HWND hWnd)
 	CreateRootSignature();
 	CreatePSO();
 
-	LoadScribbleTextureResource();
-
 	CreateCommandObjects();
 	CreateHeaps();
 	CreateSwapChain();
-	CreateHeapResources();
 	CreateFence();
+
+	LoadScribbleTextureResource();
+	CreateHeapResources();
 
 	InitTriangle();
 
@@ -522,14 +523,14 @@ void CreateHeapResources()
 	// srv
 	CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(gSrvHeap->GetCPUDescriptorHandleForHeapStart());
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-	srvDesc.Format = gScribbleTex->GetDesc().Format;
+	srvDesc.Format = gScribbleTexComPtr->GetDesc().Format;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.Texture2D.MostDetailedMip = 0;
-	srvDesc.Texture2D.MipLevels = gScribbleTex->GetDesc().MipLevels;
+	srvDesc.Texture2D.MipLevels = gScribbleTexComPtr->GetDesc().MipLevels;
 	srvDesc.Texture2D.PlaneSlice = 0;
 	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
-	gDevice->CreateShaderResourceView(gScribbleTex, &srvDesc, srvHandle);
+	gDevice->CreateShaderResourceView(gScribbleTexComPtr.Get(), &srvDesc, srvHandle);
 }
 
 void Update()
@@ -598,8 +599,7 @@ void PopulateCommandList()
 	//gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
 	//gCommandList->SetGraphicsRootDescriptorTable(0, gCbvHeap->GetGPUDescriptorHandleForHeapStart());
-	gCommandList->SetGraphicsRootConstantBufferView(0, gConstantBuffer->GetGPUVirtualAddress());
-
+	
 	// RS
 	gCommandList->RSSetViewports(1, &gViewport);
 	gCommandList->RSSetScissorRects(1, &gScissorRect);
@@ -670,7 +670,6 @@ void Release()
 	COM_RELEASE(gConstantBuffer);
 	COM_RELEASE(gVertexBuffer);
 	COM_RELEASE(gIndexBuffer);
-	COM_RELEASE(gScribbleTex);
 
 	COM_RELEASE(gPSO);
 	COM_RELEASE(gRootSignature);
@@ -717,17 +716,26 @@ void CreateRootSignature()
 
 	
 	CD3DX12_ROOT_PARAMETER rootParams[2];
-	rootParams[0].InitAsConstantBufferView(0); // ObjectConstantBuffer용 (b0)
-	rootParams[1].InitAsShaderResourceView(0); // gScribbleMap용 (t0)
+	// ObjectConstantBuffer용 (b0)
+	rootParams[0].InitAsConstantBufferView(0);
+	
+	// gScribbleMap용 (t0)
+	// InitAsShaderResourceView(0)로 하려고 했는데,
+	// 바인딩 할 때 Texture의 GPU 주소를 가져오려 했더니 안된다고 한다. (Buffer 스타일만 가능)
+	// 그래서 Descriptor Table로 한다.
+	CD3DX12_DESCRIPTOR_RANGE range[1];
+	range[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);
+	rootParams[1].InitAsDescriptorTable(1, &range[0]);
 	
 
 	ID3DBlob* signature = nullptr;
 	ID3DBlob* error = nullptr;
 
-	CD3DX12_STATIC_SAMPLER_DESC sampler(0);
+	CD3DX12_STATIC_SAMPLER_DESC samplers[1];
+	samplers[0] = CD3DX12_STATIC_SAMPLER_DESC(0);
 
 	ThrowIfFailed(D3D12SerializeRootSignature(
-		&CD3DX12_ROOT_SIGNATURE_DESC(_countof(rootParams), rootParams, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT),
+		&CD3DX12_ROOT_SIGNATURE_DESC(_countof(rootParams), rootParams, 1, &samplers[0], D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT),
 		D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
 	ThrowIfFailed(gDevice->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&gRootSignature)));
 }
@@ -738,7 +746,7 @@ void CreatePSO()
 	{
 		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 		{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, sizeof(XMFLOAT3), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, sizeof(XMFLOAT3) + sizeof(XMFLOAT2), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, sizeof(XMFLOAT3) + sizeof(XMFLOAT3), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 	};
 
 	ID3DBlob* vertexShader = nullptr;
@@ -786,40 +794,40 @@ void InitTriangle()
 	Vertex triangleVertices[] =
 	{
 		// front face
-		{{-1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
-		{{-1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
-		{{+1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
-		{{+1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
+		{{-1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
+		{{-1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
+		{{+1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
+		{{+1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
 
 		// back face
-		{{-1.0f, -1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}},
-		{{-1.0f, +1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}},
-		{{+1.0f, +1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}},
-		{{+1.0f, -1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}},
+		{{-1.0f, -1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{-1.0f, +1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+		{{+1.0f, +1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+		{{+1.0f, -1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
 
 		// left face
-		{{-1.0f, -1.0f, +1.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{-1.0f, +1.0f, +1.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{-1.0f, +1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}},
-		{{-1.0f, -1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}},
+		{{-1.0f, -1.0f, +1.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+		{{-1.0f, +1.0f, +1.0f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+		{{-1.0f, +1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+		{{-1.0f, -1.0f, -1.0f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
 
 		// right face
-		{{+1.0f, -1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}},
-		{{+1.0f, +1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}},
-		{{+1.0f, +1.0f, +1.0f}, {1.0f, 0.0f, 0.0f}},
-		{{+1.0f, -1.0f, +1.0f}, {1.0f, 0.0f, 0.0f}},
+		{{+1.0f, -1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
+		{{+1.0f, +1.0f, -1.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+		{{+1.0f, +1.0f, +1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+		{{+1.0f, -1.0f, +1.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
 
 		// top face
-		{{-1.0f, +1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
-		{{-1.0f, +1.0f, +1.0f}, {0.0f, 1.0f, 0.0f}},
-		{{+1.0f, +1.0f, +1.0f}, {0.0f, 1.0f, 0.0f}},
-		{{+1.0f, +1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}},
+		{{-1.0f, +1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+		{{-1.0f, +1.0f, +1.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+		{{+1.0f, +1.0f, +1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+		{{+1.0f, +1.0f, -1.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
 
 		// bottom face
-		{{-1.0f, -1.0f, +1.0f}, {0.0f, -1.0f, 0.0f}},
-		{{-1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}},
-		{{+1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}},
-		{{+1.0f, -1.0f, +1.0f}, {0.0f, -1.0f, 0.0f}},
+		{{-1.0f, -1.0f, +1.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
+		{{-1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+		{{+1.0f, -1.0f, -1.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+		{{+1.0f, -1.0f, +1.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
 	};
 
 	UINT16 triangleIndices[] =
@@ -905,6 +913,18 @@ void RenderTriangle()
 	gCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	gCommandList->IASetVertexBuffers(0, 1, &gVertexBufferView);
 	gCommandList->IASetIndexBuffer(&gIndexBufferView);
+
+
+
+	ID3D12DescriptorHeap* heaps[] = { gSrvHeap };
+	gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+	CD3DX12_GPU_DESCRIPTOR_HANDLE handle(gSrvHeap->GetGPUDescriptorHandleForHeapStart());
+	gCommandList->SetGraphicsRootDescriptorTable(1, handle);
+
+	gCommandList->SetGraphicsRootConstantBufferView(0, gConstantBuffer->GetGPUVirtualAddress());
+
+
 	//D3D12 WARNING: ID3D12CommandList::DrawInstanced: Element [0] in the current Input Layout's declaration references input slot 0, but there is no Buffer bound to this slot. This is OK, as reads from an empty slot are defined to return 0. It is also possible the developer knows the data will not be used anyway. This is only a problem if the developer actually intended to bind an input Buffer here.  [ EXECUTION WARNING #202: COMMAND_LIST_DRAW_VERTEX_BUFFER_NOT_SET]
 	gCommandList->DrawIndexedInstanced(gIndexCount, 1, 0, 0, 0);
 }
@@ -935,7 +955,16 @@ void InitConstantBuffer()
 
 void LoadScribbleTextureResource()
 {
-	std::unique_ptr<uint8_t[]> ddsData;
-	std::vector<D3D12_SUBRESOURCE_DATA> subresources;
-	ThrowIfFailed(LoadDDSTextureFromFile(gDevice, L"scribble.dds", &gScribbleTex, ddsData, subresources));
+	ThrowIfFailed(gCommandAlloc->Reset());
+	// TODO: 파이프라인 상태 객체 넣기
+	ThrowIfFailed(gCommandList->Reset(gCommandAlloc, gPSO));
+
+	ThrowIfFailed(CreateDDSTextureFromFile12(gDevice, gCommandList, L"scribble.dds", gScribbleTexComPtr, gScribbleTexUploadHeapComPtr));
+
+	ThrowIfFailed(gCommandList->Close());
+
+	ID3D12CommandList* cmdLists[] = { gCommandList };
+	gCommandQueue->ExecuteCommandLists(_countof(cmdLists), cmdLists);
+
+	FlushCommandQueue();
 }
