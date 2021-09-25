@@ -8,7 +8,7 @@
 #include<DirectXMath.h>
 #include<iostream>
 #include<string>
-
+#include"DDSTextureLoader12.h"
 #include <comdef.h>
 
 #pragma comment(lib, "d3d12.lib")
@@ -103,10 +103,11 @@ ID3D12Resource* gRenderBuffer[SwapChainBufferCount] = { nullptr };
 // 깊이 스텐실 버퍼 리소스 - 깊이 스텐실 힙과 연결됨
 //ID3D12Resource* gDepthStencilBuffer = nullptr;
 
-// rtv, dsv, cbv힙, 각 핸들은 그때그때 만들어 쓴다.
+// rtv, dsv, cbv힙, srv힙 각 핸들은 그때그때 만들어 쓴다.
 ID3D12DescriptorHeap* gRtvHeap = nullptr;
 ID3D12DescriptorHeap* gDsvHeap = nullptr;
 ID3D12DescriptorHeap* gCbvHeap = nullptr;
+ID3D12DescriptorHeap* gSrvHeap = nullptr;
 
 // rtv, dsv, cbv 힙의 크기
 UINT gRtvHeapSize = 0;
@@ -139,7 +140,10 @@ void CreateViewport();
 void CreateScissorRect();
 void CreateFence();
 
-// rtv, dsv 관련 리소스 생성
+// DDS 텍스쳐 파일 로드
+void LoadScribbleTextureResource();
+
+// rtv, dsv, srv 관련 리소스 생성
 void CreateHeapResources();
 
 /*** 게임 로직 관련 ***/
@@ -162,6 +166,7 @@ typedef struct _Vertex
 {
 	XMFLOAT3 position;
 	XMFLOAT3 normal;
+	XMFLOAT2 tex;
 } Vertex;
 
 ID3D12Resource* gVertexBuffer;
@@ -173,6 +178,8 @@ UINT gIndexCount;
 
 ID3D12RootSignature* gRootSignature = nullptr;
 ID3D12PipelineState* gPSO = nullptr;
+
+ID3D12Resource* gScribbleTex = nullptr;
 
 // 초기화
 void CreateRootSignature();
@@ -356,6 +363,8 @@ HRESULT InitD3D(HWND hWnd)
 	CreateRootSignature();
 	CreatePSO();
 
+	LoadScribbleTextureResource();
+
 	CreateCommandObjects();
 	CreateHeaps();
 	CreateSwapChain();
@@ -429,6 +438,14 @@ void CreateHeaps()
 
 	ThrowIfFailed(gDevice->CreateDescriptorHeap(&cbvHeapDesc, IID_PPV_ARGS(&gCbvHeap)));
 
+	// TODO: srv
+	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.NumDescriptors = 1;
+	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+	ThrowIfFailed(gDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&gSrvHeap)));
+
 	gRtvHeapSize = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 	gDsvHeapSize = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 	gCbvHeapSize = gDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -466,8 +483,8 @@ void CreateViewport()
 	gViewport = { };
 	gViewport.TopLeftX = 0;
 	gViewport.TopLeftY = 0;
-	gViewport.Width = gClientWidth;
-	gViewport.Height = gClientHeight;
+	gViewport.Width = static_cast<FLOAT>(gClientWidth);
+	gViewport.Height = static_cast<FLOAT>(gClientHeight);
 	gViewport.MinDepth = 0;
 	gViewport.MaxDepth = 1;
 }
@@ -501,6 +518,18 @@ void CreateHeapResources()
 	// TODO: dsv
 	{
 	}
+
+	// srv
+	CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(gSrvHeap->GetCPUDescriptorHandleForHeapStart());
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = gScribbleTex->GetDesc().Format;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = gScribbleTex->GetDesc().MipLevels;
+	srvDesc.Texture2D.PlaneSlice = 0;
+	srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+	gDevice->CreateShaderResourceView(gScribbleTex, &srvDesc, srvHandle);
 }
 
 void Update()
@@ -533,14 +562,14 @@ void Update()
 	float x = gRadius * sinf(gPhi) * cosf(gTheta);
 	float y = gRadius * cosf(gPhi);
 	float z = gRadius * sinf(gPhi) * sinf(gTheta);
-	
+
 	XMVECTOR pos = XMVectorSet(x, y, z, 1);
 	XMVECTOR target = XMVectorZero();
 	XMVECTOR up = XMVectorSet(0, 1, 0, 0);
 
 	XMMATRIX view = XMMatrixLookAtLH(pos, target, up);
 	XMStoreFloat4x4(&gView, view);
-	
+
 	float aspectRatio = (float)gClientWidth / gClientHeight;
 	XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV2, aspectRatio, 1.0f, 1000.0f);
 	XMStoreFloat4x4(&gProj, proj);
@@ -640,6 +669,7 @@ void Release()
 	COM_RELEASE(gConstantBuffer);
 	COM_RELEASE(gVertexBuffer);
 	COM_RELEASE(gIndexBuffer);
+	COM_RELEASE(gScribbleTex);
 
 	COM_RELEASE(gPSO);
 	COM_RELEASE(gRootSignature);
@@ -653,6 +683,7 @@ void Release()
 
 	COM_RELEASE(gSwapChain);
 
+	COM_RELEASE(gSrvHeap);
 	COM_RELEASE(gCbvHeap);
 	COM_RELEASE(gRtvHeap);
 
@@ -684,8 +715,10 @@ void CreateRootSignature()
 	ID3DBlob* signature = nullptr;
 	ID3DBlob* error = nullptr;
 
+	CD3DX12_STATIC_SAMPLER_DESC sampler(0);
+
 	ThrowIfFailed(D3D12SerializeRootSignature(
-		&CD3DX12_ROOT_SIGNATURE_DESC(_countof(rootParams), rootParams, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT),
+		&CD3DX12_ROOT_SIGNATURE_DESC(_countof(rootParams), rootParams, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT),
 		D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
 	ThrowIfFailed(gDevice->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&gRootSignature)));
 }
@@ -696,6 +729,7 @@ void CreatePSO()
 	{
 		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 		{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, sizeof(XMFLOAT3), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+		{"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, sizeof(XMFLOAT3) + sizeof(XMFLOAT2), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
 	};
 
 	ID3DBlob* vertexShader = nullptr;
@@ -743,10 +777,10 @@ void InitTriangle()
 	Vertex triangleVertices[] =
 	{
 		// front face
-		{{-1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{-1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{+1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}},
-		{{+1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}},
+		{{-1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
+		{{-1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
+		{{+1.0f, +1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
+		{{+1.0f, -1.0f, -1.0f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
 
 		// back face
 		{{-1.0f, -1.0f, +1.0f}, {0.0f, 0.0f, 1.0f}},
@@ -888,4 +922,11 @@ void InitConstantBuffer()
 	gConstantBuffer->Map(0, nullptr, reinterpret_cast<void**>(&gCbvDataBegin));
 	memcpy(gCbvDataBegin, &gConstantBufferData, sizeof(gConstantBufferData));
 	//gConstantBuffer->Unmap(0, nullptr);
+}
+
+void LoadScribbleTextureResource()
+{
+	std::unique_ptr<uint8_t[]> ddsData;
+	std::vector<D3D12_SUBRESOURCE_DATA> subresources;
+	ThrowIfFailed(LoadDDSTextureFromFile(gDevice, L"scribble.dds", &gScribbleTex, ddsData, subresources));
 }

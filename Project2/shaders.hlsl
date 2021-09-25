@@ -8,7 +8,7 @@
 // PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.
 //
 //*********************************************************
-
+// C++ 코드에서 gConstantBufferData에 들어있는 내용이 채워진다.
 cbuffer ObjectConstantBuffer : register(b0)
 {
     float4x4 worldViewProjection;
@@ -19,6 +19,7 @@ struct PSInput
 {
     float4 position : SV_POSITION;
     float3 normal : NORMAL;
+    float2 tex : TEXCOORD;
 };
 
 struct Material
@@ -28,12 +29,16 @@ struct Material
     float shininess;
 };
 
-PSInput VSMain(float4 position : POSITION, float3 normal : NORMAL)
+SamplerState gsamAnisotropicWrap : register(s0);
+Texture2D gScribbleMap : register(t0);
+
+PSInput VSMain(float4 position : POSITION, float3 normal : NORMAL, float2 tex : TEXCOORD)
 {
     PSInput result;
 
     result.position = mul(position, worldViewProjection);
     result.normal = mul(normal, (float3x3)worldViewProjection);
+    result.tex = tex;
 
     return result;
 }
