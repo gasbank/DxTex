@@ -594,10 +594,11 @@ void PopulateCommandList()
 	// 루트 서명 넣기
 	gCommandList->SetGraphicsRootSignature(gRootSignature);
 
-	ID3D12DescriptorHeap* heaps[] = { gCbvHeap };
-	gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+	//ID3D12DescriptorHeap* heaps[] = { gCbvHeap };
+	//gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
-	gCommandList->SetGraphicsRootDescriptorTable(0, gCbvHeap->GetGPUDescriptorHandleForHeapStart());
+	//gCommandList->SetGraphicsRootDescriptorTable(0, gCbvHeap->GetGPUDescriptorHandleForHeapStart());
+	gCommandList->SetGraphicsRootConstantBufferView(0, gConstantBuffer->GetGPUVirtualAddress());
 
 	// RS
 	gCommandList->RSSetViewports(1, &gViewport);
@@ -706,11 +707,18 @@ void Release()
 
 void CreateRootSignature()
 {
+	/*
 	CD3DX12_DESCRIPTOR_RANGE range[1];
 	CD3DX12_ROOT_PARAMETER rootParams[1];
 
 	range[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_CBV, 1, 0);
 	rootParams[0].InitAsDescriptorTable(1, &range[0]);
+	*/
+
+	
+	CD3DX12_ROOT_PARAMETER rootParams[1];
+	rootParams[0].InitAsConstantBufferView(0);
+	
 
 	ID3DBlob* signature = nullptr;
 	ID3DBlob* error = nullptr;
