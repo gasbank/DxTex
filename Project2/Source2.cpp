@@ -599,6 +599,15 @@ void PopulateCommandList()
 
 	//gCommandList->SetGraphicsRootDescriptorTable(0, gCbvHeap->GetGPUDescriptorHandleForHeapStart());
 	
+
+
+
+	ID3D12DescriptorHeap* heaps[] = { gSrvHeap };
+	gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+	gCommandList->SetGraphicsRootConstantBufferView(0, gConstantBuffer->GetGPUVirtualAddress());
+	gCommandList->SetGraphicsRootDescriptorTable(1, gSrvHeap->GetGPUDescriptorHandleForHeapStart());
+
 	// RS
 	gCommandList->RSSetViewports(1, &gViewport);
 	gCommandList->RSSetScissorRects(1, &gScissorRect);
@@ -913,17 +922,6 @@ void RenderTriangle()
 	gCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	gCommandList->IASetVertexBuffers(0, 1, &gVertexBufferView);
 	gCommandList->IASetIndexBuffer(&gIndexBufferView);
-
-
-
-	ID3D12DescriptorHeap* heaps[] = { gSrvHeap };
-	gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
-
-	CD3DX12_GPU_DESCRIPTOR_HANDLE handle(gSrvHeap->GetGPUDescriptorHandleForHeapStart());
-	gCommandList->SetGraphicsRootDescriptorTable(1, handle);
-
-	gCommandList->SetGraphicsRootConstantBufferView(0, gConstantBuffer->GetGPUVirtualAddress());
-
 
 	//D3D12 WARNING: ID3D12CommandList::DrawInstanced: Element [0] in the current Input Layout's declaration references input slot 0, but there is no Buffer bound to this slot. This is OK, as reads from an empty slot are defined to return 0. It is also possible the developer knows the data will not be used anyway. This is only a problem if the developer actually intended to bind an input Buffer here.  [ EXECUTION WARNING #202: COMMAND_LIST_DRAW_VERTEX_BUFFER_NOT_SET]
 	gCommandList->DrawIndexedInstanced(gIndexCount, 1, 0, 0, 0);
