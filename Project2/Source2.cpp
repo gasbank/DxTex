@@ -209,9 +209,9 @@ UINT8* gCbvDataBegin;
 
 // ¸ðµ¨ ºä ÇÁ·ÎÁ§¼Ç
 XMFLOAT4X4 gWorld = XMFLOAT4X4(
-	1.0f, 0.0f, 0.0f, 0.0f,
-	0.0f, 1.0f, 0.0f, 0.0f,
-	0.0f, 0.0f, 1.0f, 0.0f,
+	2.0f, 0.0f, 0.0f, 0.0f,
+	0.0f, 2.0f, 0.0f, 0.0f,
+	0.0f, 0.0f, 2.0f, 0.0f,
 	0.0f, 0.0f, 0.0f, 1.0f);
 
 XMFLOAT4X4 gView = XMFLOAT4X4(
