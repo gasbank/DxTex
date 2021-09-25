@@ -716,8 +716,9 @@ void CreateRootSignature()
 	*/
 
 	
-	CD3DX12_ROOT_PARAMETER rootParams[1];
-	rootParams[0].InitAsConstantBufferView(0);
+	CD3DX12_ROOT_PARAMETER rootParams[2];
+	rootParams[0].InitAsConstantBufferView(0); // ObjectConstantBuffer¿ë (b0)
+	rootParams[1].InitAsShaderResourceView(0); // gScribbleMap¿ë (t0)
 	
 
 	ID3DBlob* signature = nullptr;
