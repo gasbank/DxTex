@@ -110,7 +110,6 @@ ID3D12DescriptorHeap* gCbvHeap = nullptr;
 ID3D12DescriptorHeap* gSrvHeap = nullptr;
 
 Microsoft::WRL::ComPtr<ID3D12Resource> gScribbleTexComPtr;
-Microsoft::WRL::ComPtr<ID3D12Resource> gScribbleTexUploadHeapComPtr;
 
 // rtv, dsv, cbv 힙의 크기
 UINT gRtvHeapSize = 0;
@@ -670,6 +669,7 @@ void Release()
 	COM_RELEASE(gConstantBuffer);
 	COM_RELEASE(gVertexBuffer);
 	COM_RELEASE(gIndexBuffer);
+	gScribbleTexComPtr.Reset();
 
 	COM_RELEASE(gPSO);
 	COM_RELEASE(gRootSignature);
@@ -958,6 +958,8 @@ void LoadScribbleTextureResource()
 	ThrowIfFailed(gCommandAlloc->Reset());
 	// TODO: 파이프라인 상태 객체 넣기
 	ThrowIfFailed(gCommandList->Reset(gCommandAlloc, gPSO));
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> gScribbleTexUploadHeapComPtr;
 
 	ThrowIfFailed(CreateDDSTextureFromFile12(gDevice, gCommandList, L"scribble.dds", gScribbleTexComPtr, gScribbleTexUploadHeapComPtr));
 
