@@ -11,6 +11,7 @@
 #include <map>
 #include <comdef.h>
 #include "DDSTextureLoader.h"
+#include <codecvt>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -113,7 +114,7 @@ UINT gCurrentBufferIndex = 0;
 // 버퍼 리소스의 배열 - 스왑 체인과 연결됨
 ID3D12Resource* gRenderBuffer[SwapChainBufferCount] = { nullptr };
 // 깊이 스텐실 버퍼 리소스 - 깊이 스텐실 힙과 연결됨
-//ID3D12Resource* gDepthStencilBuffer = nullptr;
+ID3D12Resource* gDepthStencilBuffer = nullptr;
 
 // rtv, dsv, cbv힙, 각 핸들은 그때그때 만들어 쓴다.
 ID3D12DescriptorHeap* gRtvHeap = nullptr;
@@ -426,6 +427,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	return DefWindowProc(hWnd, message, wParam, lParam);
 }
 
+void MakeResourceTransitionDepthStencilBuffer()
+{
+	ThrowIfFailed(gCommandAlloc->Reset());
+	ThrowIfFailed(gCommandList->Reset(gCommandAlloc, nullptr));
+
+	gCommandList->ResourceBarrier(1,
+		&CD3DX12_RESOURCE_BARRIER::Transition(
+			gDepthStencilBuffer, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE)
+	);
+
+	// 무조건 닫아준다.
+	ThrowIfFailed(gCommandList->Close());
+
+	ID3D12CommandList* cmdLists[] = { gCommandList };
+	gCommandQueue->ExecuteCommandLists(_countof(cmdLists), cmdLists);
+	FlushCommandQueue();
+}
+
 HRESULT InitD3D(HWND hWnd)
 {
 	gHWnd = hWnd;
@@ -448,6 +467,8 @@ HRESULT InitD3D(HWND hWnd)
 	CreateTextureResourceFromFile(L"bricks.dds");
 	CreateTextureResourceFromFile(L"water.dds");
 	CreateTextureResourceFromFile(L"WireFence.dds");
+
+	MakeResourceTransitionDepthStencilBuffer();
 
 	CreateMaterials();
 
@@ -509,6 +530,13 @@ void CreateHeaps()
 	rtvHeapDesc.NumDescriptors = SwapChainBufferCount;
 
 	ThrowIfFailed(gDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&gRtvHeap)));
+
+	// dsv
+	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	dsvHeapDesc.NumDescriptors = 1;
+
+	ThrowIfFailed(gDevice->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&gDsvHeap)));
 
 	// cbv
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc = {};
@@ -596,6 +624,33 @@ void CreateHeapResources()
 		gDevice->CreateRenderTargetView(gRenderBuffer[i], nullptr, rtvHandle);
 		rtvHandle.Offset(gRtvHeapSize);
 	}
+
+	D3D12_RESOURCE_DESC depthStencilDesc;
+	depthStencilDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	depthStencilDesc.Alignment = 0;
+	depthStencilDesc.Width = gClientWidth;
+	depthStencilDesc.Height = gClientHeight;
+	depthStencilDesc.DepthOrArraySize = 1;
+	depthStencilDesc.MipLevels = 1;
+	depthStencilDesc.Format = gDepthStencilFormat;
+	depthStencilDesc.SampleDesc.Count = 1;
+	depthStencilDesc.SampleDesc.Quality = 0;
+	depthStencilDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	depthStencilDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE clearValue;
+	clearValue.Format = gDepthStencilFormat;
+	clearValue.DepthStencil.Depth = 1.0f;
+	clearValue.DepthStencil.Stencil = 0x85;
+
+	gDevice->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), D3D12_HEAP_FLAG_NONE, &depthStencilDesc, D3D12_RESOURCE_STATE_COMMON, &clearValue, IID_PPV_ARGS(&gDepthStencilBuffer));
+
+	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = gDepthStencilFormat;
+	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+	dsvDesc.Texture2D.MipSlice = 0;
+	gDevice->CreateDepthStencilView(gDepthStencilBuffer, &dsvDesc, gDsvHeap->GetCPUDescriptorHandleForHeapStart());
 }
 
 void Update()
@@ -667,7 +722,7 @@ void PopulateCommandList()
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(gRtvHeap->GetCPUDescriptorHandleForHeapStart(), gCurrentBufferIndex, gRtvHeapSize);
 
 	// OMSetRenderTargets은 render target을 그리기 전에 미리 핸들을 먼저 얻은 다음 호출해야 한다.
-	gCommandList->OMSetRenderTargets(1, &rtvHandle, false, nullptr);
+	gCommandList->OMSetRenderTargets(1, &rtvHandle, true, &gDsvHeap->GetCPUDescriptorHandleForHeapStart());
 
 	gCommandList->ResourceBarrier(1,
 		&CD3DX12_RESOURCE_BARRIER::Transition(
@@ -677,18 +732,25 @@ void PopulateCommandList()
 	// 렌더 명령 기록
 	gCommandList->ClearRenderTargetView(rtvHandle, Colors::AliceBlue, 0, nullptr);
 
-	// 각종 물체 그리기 및 PSO 변경
-	//gCommandList->SetPipelineState(gPSOs["opaque"]); // 이미 위에서 지정함.
+	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(gDsvHeap->GetCPUDescriptorHandleForHeapStart(), 0, gDsvHeapSize);
+	gCommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0x85, 0, nullptr);
 
+	// 각종 물체 그리기 및 PSO 변경
+
+	gCommandList->OMSetStencilRef(1);
+	gCommandList->SetPipelineState(gPSOs["markStencil"]);
+	DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
+
+	gCommandList->SetPipelineState(gPSOs["opaque"]); // gCommandList->Reset() 시 지정하므로 다시 지정하지 않아도 됨
 	DrawRenderItems(gCommandList, gOpaqueRenderItems);
 
 	gCommandList->SetPipelineState(gPSOs["alphaTested"]);
-
 	DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
 
 	gCommandList->SetPipelineState(gPSOs["transparent"]);
-
 	DrawRenderItems(gCommandList, gTransparentRenderItems);
+
+	
 
 	gCommandList->ResourceBarrier(1,
 		&CD3DX12_RESOURCE_BARRIER::Transition(
@@ -765,10 +827,13 @@ void Release()
 		COM_RELEASE(gRenderBuffer[i]);
 	}
 
+	COM_RELEASE(gDepthStencilBuffer);
+
 	COM_RELEASE(gSwapChain);
 
 	COM_RELEASE(gSrvHeap);
 	COM_RELEASE(gCbvHeap);
+	COM_RELEASE(gDsvHeap);
 	COM_RELEASE(gRtvHeap);
 
 	COM_RELEASE(gCommandQueue);
@@ -878,7 +943,9 @@ void CreatePSO()
 	opaquePSODesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	opaquePSODesc.SampleMask = UINT_MAX;
 	opaquePSODesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	opaquePSODesc.DepthStencilState.DepthEnable = false;
+	opaquePSODesc.DepthStencilState.DepthEnable = true;
+	opaquePSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	opaquePSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
 	opaquePSODesc.DepthStencilState.StencilEnable = false;
 	opaquePSODesc.InputLayout = { inputElementDesc, _countof(inputElementDesc) };
 	opaquePSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -916,6 +983,45 @@ void CreatePSO()
 	alphaTestedPSODesc.PS = CD3DX12_SHADER_BYTECODE(gShaders["alphaTestedPS"]);
 	alphaTestedPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	ThrowIfFailed(gDevice->CreateGraphicsPipelineState(&alphaTestedPSODesc, IID_PPV_ARGS(&gPSOs["alphaTested"])));
+
+
+	// 스텐실 영역 렌더링용
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC markStencilPSODesc = {};
+	markStencilPSODesc.pRootSignature = gRootSignature;
+	markStencilPSODesc.VS = CD3DX12_SHADER_BYTECODE(gShaders["VS"]);
+	markStencilPSODesc.PS = CD3DX12_SHADER_BYTECODE(gShaders["alphaTestedPS"]);
+
+	CD3DX12_BLEND_DESC markStencilBlendState(D3D12_DEFAULT);
+	markStencilBlendState.RenderTarget[0].RenderTargetWriteMask = 0; // RT에는 그리지 않는다.
+	markStencilPSODesc.BlendState = markStencilBlendState;
+
+	markStencilPSODesc.SampleMask = UINT_MAX;
+	markStencilPSODesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	markStencilPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	markStencilPSODesc.DepthStencilState.DepthEnable = true;
+	markStencilPSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	markStencilPSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	markStencilPSODesc.DepthStencilState.StencilEnable = true;
+	markStencilPSODesc.DepthStencilState.StencilReadMask = UINT8_MAX;
+	markStencilPSODesc.DepthStencilState.StencilWriteMask = UINT8_MAX;
+	markStencilPSODesc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	markStencilPSODesc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	markStencilPSODesc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_REPLACE;
+	markStencilPSODesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	markStencilPSODesc.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	markStencilPSODesc.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	markStencilPSODesc.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_REPLACE;
+	markStencilPSODesc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	markStencilPSODesc.InputLayout.pInputElementDescs = inputElementDesc;
+	markStencilPSODesc.InputLayout.NumElements = _countof(inputElementDesc);
+	markStencilPSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	markStencilPSODesc.NumRenderTargets = 1;
+	markStencilPSODesc.RTVFormats[0] = gRenderBufferFormat;
+	markStencilPSODesc.DSVFormat = gDepthStencilFormat;
+	markStencilPSODesc.SampleDesc.Count = 1;
+	markStencilPSODesc.SampleDesc.Quality = 0;
+
+	ThrowIfFailed(gDevice->CreateGraphicsPipelineState(&markStencilPSODesc, IID_PPV_ARGS(&gPSOs["markStencil"])));
 }
 
 void InitConstantBuffer()
@@ -942,6 +1048,13 @@ void InitConstantBuffer()
 	//gConstantBuffer->Unmap(0, nullptr);
 }
 
+// convert wstring to UTF-8 string
+std::string ConvertWideToUtf8(const std::wstring& str)
+{
+	std::wstring_convert<std::codecvt_utf8<wchar_t>> myconv;
+	return myconv.to_bytes(str);
+}
+
 void InitShaderResources()
 {
 	CD3DX12_CPU_DESCRIPTOR_HANDLE srvHandle(gSrvHeap->GetCPUDescriptorHandleForHeapStart());
@@ -961,9 +1074,7 @@ void InitShaderResources()
 
 		gDevice->CreateShaderResourceView(texPair.second.Get(), &srvDesc, srvHandle);
 
-		std::string texStr;
-		texStr.assign(texPair.first.begin(), texPair.first.end());
-		gTexDiffuseSrvHeapIndices.insert(std::make_pair(texStr, index));
+		gTexDiffuseSrvHeapIndices.insert(std::make_pair(ConvertWideToUtf8(texPair.first), index));
 
 		srvHandle.Offset(1, gCbvHeapSize);
 		index += 1;
@@ -1338,7 +1449,7 @@ void CreateRenderItems()
 
 void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems)
 {
-	for each (auto ri in renderItems)
+	for each (const auto& ri in renderItems)
 	{
 		// 첫 번째 루트 파라미터
 		{
@@ -1359,6 +1470,7 @@ void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<Rende
 			gCommandList->SetGraphicsRootDescriptorTable(1, tex);
 		}
 
+		// IA는 Input Assembler의 약자
 		gCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		gCommandList->IASetVertexBuffers(0, 1, &ri.MeshData->vertexBufferView);
 		gCommandList->IASetIndexBuffer(&ri.MeshData->indexBufferView);
