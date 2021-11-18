@@ -1341,9 +1341,8 @@ void CreateWaterGeometry()
 	CreateMeshData(vertices, _countof(vertices), indices, _countof(indices), "water");
 }
 
-void CreateObjGeometry()
+void CreateObjFileGeometry(const wchar_t* fileName, const char* meshName)
 {
-	auto fileName = L"cube.obj";
 	auto obj = ObjParse(fileName);
 	auto s = std::format(L"{}: {} faces", fileName, obj.faces.size());
 	OutputDebugString(s.c_str());
@@ -1374,7 +1373,13 @@ void CreateObjGeometry()
 		}
 	}
 
-	CreateMeshData(&vertices[0], (UINT)vertices.size(), &indices[0], (UINT)indices.size(), "rotatedCube");
+	CreateMeshData(&vertices[0], (UINT)vertices.size(), &indices[0], (UINT)indices.size(), meshName);
+}
+
+void CreateObjGeometry()
+{
+	CreateObjFileGeometry(L"cube.obj", "rotatedCube");
+	CreateObjFileGeometry(L"monkey.obj", "monkey");
 }
 
 void CreateRenderItems()
@@ -1390,6 +1395,13 @@ void CreateRenderItems()
 		auto renderItem = std::make_unique<RenderItem>();
 		renderItem->WorldMat = Identity4x4();
 		renderItem->MeshData = &gMeshDatas["rotatedCube"];
+		renderItem->Material = &gMaterials["box"];
+		gOpaqueRenderItems.push_back(std::move(renderItem));
+	}
+	{
+		auto renderItem = std::make_unique<RenderItem>();
+		renderItem->WorldMat = Identity4x4();
+		renderItem->MeshData = &gMeshDatas["monkey"];
 		renderItem->Material = &gMaterials["box"];
 		gOpaqueRenderItems.push_back(std::move(renderItem));
 	}
