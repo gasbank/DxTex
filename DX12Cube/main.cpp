@@ -249,6 +249,7 @@ void CreatePSO();
 
 // 메쉬 초기화 및 버퍼 생성, 그리기
 void CreateMaterials();
+void CreateMeshData(const Vertex* vertices, UINT vertexCount, const UINT16* indices, UINT indexCount, const char* meshName);
 void CreateBoxGeometry();
 void CreateGrassGeometry();
 void CreateWaterGeometry();
@@ -1220,75 +1221,7 @@ void CreateBoxGeometry()
 		20, 22, 23
 	};
 
-	const UINT vertexBufferSize = sizeof(vertices);
-	const UINT indexBufferSize = sizeof(indices);
-	UINT gIndexCount = _countof(indices);
-
-	ID3D12Resource* gVertexBuffer;
-
-	{
-		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-		auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-		// 버텍스 버퍼 생성
-		ThrowIfFailed(gDevice->CreateCommittedResource(
-			&uploadHeapProp,
-			D3D12_HEAP_FLAG_NONE,
-			&vertexBufferDesc,
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_PPV_ARGS(&gVertexBuffer)
-		));
-	}
-
-	// 버텍스 버퍼에 삼각형 정보 복사
-	UINT8* pVertexDataBegin;
-	CD3DX12_RANGE readRange(0, 0);
-	ThrowIfFailed(gVertexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pVertexDataBegin)));
-	memcpy(pVertexDataBegin, vertices, sizeof(vertices));
-	gVertexBuffer->Unmap(0, nullptr);
-
-	D3D12_VERTEX_BUFFER_VIEW gVertexBufferView;
-
-	// 버텍스 버퍼 뷰 생성
-	gVertexBufferView.BufferLocation = gVertexBuffer->GetGPUVirtualAddress();
-	gVertexBufferView.SizeInBytes = vertexBufferSize;
-	gVertexBufferView.StrideInBytes = sizeof(Vertex);
-
-	ID3D12Resource* gIndexBuffer;
-	{
-		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-		auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
-		// 인덱스 버퍼 생성
-		ThrowIfFailed(gDevice->CreateCommittedResource(
-			&uploadHeapProp,
-			D3D12_HEAP_FLAG_NONE,
-			&indexBufferDesc,
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_PPV_ARGS(&gIndexBuffer)
-		));
-	}
-
-	// 인덱스 버퍼에 삼각형 정보 복사
-	UINT8* pIndexDataBegin;
-	ThrowIfFailed(gIndexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pIndexDataBegin)));
-	memcpy(pIndexDataBegin, indices, sizeof(indices));
-	gIndexBuffer->Unmap(0, nullptr);
-
-	D3D12_INDEX_BUFFER_VIEW gIndexBufferView;
-
-	// 인덱스 버퍼 뷰 생성
-	gIndexBufferView.BufferLocation = gIndexBuffer->GetGPUVirtualAddress();
-	gIndexBufferView.SizeInBytes = indexBufferSize;
-	gIndexBufferView.Format = DXGI_FORMAT_R16_UINT;
-
-	gMeshDatas["box"].vertexBuffer = gVertexBuffer;
-	gMeshDatas["box"].vertexBufferView = gVertexBufferView;
-	gMeshDatas["box"].indexBuffer = gIndexBuffer;
-	gMeshDatas["box"].indexBufferView = gIndexBufferView;
-	gMeshDatas["box"].indexCount = gIndexCount;
-
-	FlushCommandQueue();
+	CreateMeshData(vertices, _countof(vertices), indices, _countof(indices), "box");
 }
 
 void CreateGrassGeometry()
@@ -1309,75 +1242,7 @@ void CreateGrassGeometry()
 		0, 2, 3,
 	};
 
-	const UINT vertexBufferSize = sizeof(vertices);
-	const UINT indexBufferSize = sizeof(indices);
-	UINT indexCount = _countof(indices);
-
-	ID3D12Resource* vertexBuffer;
-
-	{
-		// 버텍스 버퍼 생성
-		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-		auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
-		ThrowIfFailed(gDevice->CreateCommittedResource(
-			&uploadHeapProp,
-			D3D12_HEAP_FLAG_NONE,
-			&vertexBufferDesc,
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_PPV_ARGS(&vertexBuffer)
-		));
-	}
-
-	// 버텍스 버퍼에 삼각형 정보 복사
-	UINT8* pVertexDataBegin;
-	CD3DX12_RANGE readRange(0, 0);
-	ThrowIfFailed(vertexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pVertexDataBegin)));
-	memcpy(pVertexDataBegin, vertices, sizeof(vertices));
-	vertexBuffer->Unmap(0, nullptr);
-
-	D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
-
-	// 버텍스 버퍼 뷰 생성
-	vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
-	vertexBufferView.SizeInBytes = vertexBufferSize;
-	vertexBufferView.StrideInBytes = sizeof(Vertex);
-
-	ID3D12Resource* indexBuffer;
-	{
-		// 인덱스 버퍼 생성
-		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
-		auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
-		ThrowIfFailed(gDevice->CreateCommittedResource(
-			&uploadHeapProp,
-			D3D12_HEAP_FLAG_NONE,
-			&indexBufferDesc,
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_PPV_ARGS(&indexBuffer)
-		));
-	}
-
-	// 인덱스 버퍼에 삼각형 정보 복사
-	UINT8* pIndexDataBegin;
-	ThrowIfFailed(indexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pIndexDataBegin)));
-	memcpy(pIndexDataBegin, indices, sizeof(indices));
-	indexBuffer->Unmap(0, nullptr);
-
-	D3D12_INDEX_BUFFER_VIEW indexBufferView;
-
-	// 인덱스 버퍼 뷰 생성
-	indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
-	indexBufferView.SizeInBytes = indexBufferSize;
-	indexBufferView.Format = DXGI_FORMAT_R16_UINT;
-
-	gMeshDatas["grass"].vertexBuffer = vertexBuffer;
-	gMeshDatas["grass"].vertexBufferView = vertexBufferView;
-	gMeshDatas["grass"].indexBuffer = indexBuffer;
-	gMeshDatas["grass"].indexBufferView = indexBufferView;
-	gMeshDatas["grass"].indexCount = indexCount;
-
-	FlushCommandQueue();
+	CreateMeshData(vertices, _countof(vertices), indices, _countof(indices), "grass");
 }
 
 void CreateMeshData(const Vertex* vertices, UINT vertexCount, const UINT16* indices, UINT indexCount, const char* meshName)
@@ -1450,7 +1315,7 @@ void CreateMeshData(const Vertex* vertices, UINT vertexCount, const UINT16* indi
 	meshData.indexBufferView = indexBufferView;
 	meshData.indexCount = indexCount;
 
-	FlushCommandQueue();
+	//FlushCommandQueue();
 }
 
 void CreateWaterGeometry()
