@@ -12,6 +12,8 @@
 #include <comdef.h>
 #include "DDSTextureLoader.h"
 #include <codecvt>
+#include "objparser.h"
+#include <format>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -250,6 +252,7 @@ void CreateMaterials();
 void CreateBoxGeometry();
 void CreateGrassGeometry();
 void CreateWaterGeometry();
+void CreateObjGeometry();
 void CreateRenderItems();
 void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems);
 
@@ -432,10 +435,8 @@ void MakeResourceTransitionDepthStencilBuffer()
 	ThrowIfFailed(gCommandAlloc->Reset());
 	ThrowIfFailed(gCommandList->Reset(gCommandAlloc, nullptr));
 
-	gCommandList->ResourceBarrier(1,
-		&CD3DX12_RESOURCE_BARRIER::Transition(
-			gDepthStencilBuffer, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE)
-	);
+	auto transition = CD3DX12_RESOURCE_BARRIER::Transition(gDepthStencilBuffer, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	gCommandList->ResourceBarrier(1, &transition);
 
 	// 무조건 닫아준다.
 	ThrowIfFailed(gCommandList->Close());
@@ -475,6 +476,7 @@ HRESULT InitD3D(HWND hWnd)
 	CreateBoxGeometry();
 	CreateGrassGeometry();
 	CreateWaterGeometry();
+	CreateObjGeometry();
 	CreateRenderItems();
 
 	InitConstantBuffer();
@@ -643,7 +645,8 @@ void CreateHeapResources()
 	clearValue.DepthStencil.Depth = 1.0f;
 	clearValue.DepthStencil.Stencil = 0x85;
 
-	gDevice->CreateCommittedResource(&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT), D3D12_HEAP_FLAG_NONE, &depthStencilDesc, D3D12_RESOURCE_STATE_COMMON, &clearValue, IID_PPV_ARGS(&gDepthStencilBuffer));
+	auto defHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
+	gDevice->CreateCommittedResource(&defHeapProp, D3D12_HEAP_FLAG_NONE, &depthStencilDesc, D3D12_RESOURCE_STATE_COMMON, &clearValue, IID_PPV_ARGS(&gDepthStencilBuffer));
 
 	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
 	dsvDesc.Format = gDepthStencilFormat;
@@ -722,12 +725,11 @@ void PopulateCommandList()
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(gRtvHeap->GetCPUDescriptorHandleForHeapStart(), gCurrentBufferIndex, gRtvHeapSize);
 
 	// OMSetRenderTargets은 render target을 그리기 전에 미리 핸들을 먼저 얻은 다음 호출해야 한다.
-	gCommandList->OMSetRenderTargets(1, &rtvHandle, true, &gDsvHeap->GetCPUDescriptorHandleForHeapStart());
+	auto dsvCpuHandle = gDsvHeap->GetCPUDescriptorHandleForHeapStart();
+	gCommandList->OMSetRenderTargets(1, &rtvHandle, true, &dsvCpuHandle);
 
-	gCommandList->ResourceBarrier(1,
-		&CD3DX12_RESOURCE_BARRIER::Transition(
-			gRenderBuffer[gCurrentBufferIndex], D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET)
-	);
+	auto transition1 = CD3DX12_RESOURCE_BARRIER::Transition(gRenderBuffer[gCurrentBufferIndex], D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+	gCommandList->ResourceBarrier(1, &transition1);
 
 	// 렌더 명령 기록
 	gCommandList->ClearRenderTargetView(rtvHandle, Colors::AliceBlue, 0, nullptr);
@@ -744,18 +746,15 @@ void PopulateCommandList()
 	gCommandList->SetPipelineState(gPSOs["opaque"]); // gCommandList->Reset() 시 지정하므로 다시 지정하지 않아도 됨
 	DrawRenderItems(gCommandList, gOpaqueRenderItems);
 
-	gCommandList->SetPipelineState(gPSOs["alphaTested"]);
-	DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
+	//gCommandList->SetPipelineState(gPSOs["alphaTested"]);
+	//DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
 
 	gCommandList->SetPipelineState(gPSOs["transparent"]);
 	DrawRenderItems(gCommandList, gTransparentRenderItems);
 
 	
-
-	gCommandList->ResourceBarrier(1,
-		&CD3DX12_RESOURCE_BARRIER::Transition(
-			gRenderBuffer[gCurrentBufferIndex], D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT)
-	);
+	auto transition2 = CD3DX12_RESOURCE_BARRIER::Transition(gRenderBuffer[gCurrentBufferIndex], D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+	gCommandList->ResourceBarrier(1, &transition2);
 
 	ThrowIfFailed(gCommandList->Close());
 }
@@ -794,26 +793,26 @@ void Render()
 
 void Release()
 {
-	for each (auto var in gTexDatas)
+	for (auto var : gTexDatas)
 	{
 		gTexDatas[var.first].Reset();
 	}
 
 	COM_RELEASE(gConstantBuffer);
 
-	for each (auto var in gMeshDatas)
+	for (auto var : gMeshDatas)
 	{
 		gMeshDatas[var.first].Release();
 	}
 
 	gScribbleTex.Reset();
 
-	for each (auto var in gPSOs)
+	for (auto var : gPSOs)
 	{
 		gPSOs[var.first]->Release();
 	}
 
-	for each (auto var in gShaders)
+	for (auto var : gShaders)
 	{
 		gShaders[var.first]->Release();
 	}
@@ -875,10 +874,9 @@ void CreateRootSignature()
 	ID3DBlob* signature = nullptr;
 	ID3DBlob* error = nullptr;
 
+	auto rootSigDesc = CD3DX12_ROOT_SIGNATURE_DESC(_countof(rootParams), rootParams, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 	// 샘플러 변경
-	ThrowIfFailed(D3D12SerializeRootSignature(
-		&CD3DX12_ROOT_SIGNATURE_DESC(_countof(rootParams), rootParams, 1, &sampler, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT),
-		D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
+	ThrowIfFailed(D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
 
 	ThrowIfFailed(gDevice->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&gRootSignature)));
 }
@@ -946,7 +944,17 @@ void CreatePSO()
 	opaquePSODesc.DepthStencilState.DepthEnable = true;
 	opaquePSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
 	opaquePSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-	opaquePSODesc.DepthStencilState.StencilEnable = false;
+	opaquePSODesc.DepthStencilState.StencilEnable = true;
+	opaquePSODesc.DepthStencilState.StencilReadMask = UINT8_MAX;
+	opaquePSODesc.DepthStencilState.StencilWriteMask = UINT8_MAX;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_EQUAL;
+	opaquePSODesc.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_EQUAL;
 	opaquePSODesc.InputLayout = { inputElementDesc, _countof(inputElementDesc) };
 	opaquePSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	opaquePSODesc.NumRenderTargets = 1;
@@ -1029,10 +1037,12 @@ void InitConstantBuffer()
 	static_assert(sizeof(ObjectConstantBuffer) % 256 == 0, "constant buffer must be 256 byte");
 	const UINT constantBufferSize = sizeof(ObjectConstantBuffer);
 
+	auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+	auto constantBuffer = CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize);
 	ThrowIfFailed(gDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		&uploadHeapProp,
 		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(constantBufferSize),
+		&constantBuffer,
 		D3D12_RESOURCE_STATE_GENERIC_READ,
 		nullptr,
 		IID_PPV_ARGS(&gConstantBuffer)
@@ -1048,11 +1058,24 @@ void InitConstantBuffer()
 	//gConstantBuffer->Unmap(0, nullptr);
 }
 
-// convert wstring to UTF-8 string
-std::string ConvertWideToUtf8(const std::wstring& str)
+// Convert a wide Unicode string to an UTF8 string
+std::string utf8_encode(const std::wstring& wstr)
 {
-	std::wstring_convert<std::codecvt_utf8<wchar_t>> myconv;
-	return myconv.to_bytes(str);
+	if (wstr.empty()) return std::string();
+	int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
+	std::string strTo(size_needed, 0);
+	WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
+	return strTo;
+}
+
+// Convert an UTF8 string to a wide Unicode String
+std::wstring utf8_decode(const std::string& str)
+{
+	if (str.empty()) return std::wstring();
+	int size_needed = MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), NULL, 0);
+	std::wstring wstrTo(size_needed, 0);
+	MultiByteToWideChar(CP_UTF8, 0, &str[0], (int)str.size(), &wstrTo[0], size_needed);
+	return wstrTo;
 }
 
 void InitShaderResources()
@@ -1061,7 +1084,7 @@ void InitShaderResources()
 
 	// TODO: 텍스쳐 순서 보장하기?
 	int index = 0;
-	for each (auto texPair in gTexDatas)
+	for (auto texPair : gTexDatas)
 	{
 		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = { };
 		srvDesc.Format = texPair.second->GetDesc().Format;
@@ -1074,7 +1097,7 @@ void InitShaderResources()
 
 		gDevice->CreateShaderResourceView(texPair.second.Get(), &srvDesc, srvHandle);
 
-		gTexDiffuseSrvHeapIndices.insert(std::make_pair(ConvertWideToUtf8(texPair.first), index));
+		gTexDiffuseSrvHeapIndices.insert(std::make_pair(utf8_encode(texPair.first), index));
 
 		srvHandle.Offset(1, gCbvHeapSize);
 		index += 1;
@@ -1203,15 +1226,19 @@ void CreateBoxGeometry()
 
 	ID3D12Resource* gVertexBuffer;
 
-	// 버텍스 버퍼 생성
-	ThrowIfFailed(gDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize),
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&gVertexBuffer)
-	));
+	{
+		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+		// 버텍스 버퍼 생성
+		ThrowIfFailed(gDevice->CreateCommittedResource(
+			&uploadHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&vertexBufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&gVertexBuffer)
+		));
+	}
 
 	// 버텍스 버퍼에 삼각형 정보 복사
 	UINT8* pVertexDataBegin;
@@ -1228,15 +1255,19 @@ void CreateBoxGeometry()
 	gVertexBufferView.StrideInBytes = sizeof(Vertex);
 
 	ID3D12Resource* gIndexBuffer;
-	// 인덱스 버퍼 생성
-	ThrowIfFailed(gDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize),
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&gIndexBuffer)
-	));
+	{
+		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
+		// 인덱스 버퍼 생성
+		ThrowIfFailed(gDevice->CreateCommittedResource(
+			&uploadHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&indexBufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&gIndexBuffer)
+		));
+	}
 
 	// 인덱스 버퍼에 삼각형 정보 복사
 	UINT8* pIndexDataBegin;
@@ -1284,15 +1315,19 @@ void CreateGrassGeometry()
 
 	ID3D12Resource* vertexBuffer;
 
-	// 버텍스 버퍼 생성
-	ThrowIfFailed(gDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize),
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&vertexBuffer)
-	));
+	{
+		// 버텍스 버퍼 생성
+		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+		ThrowIfFailed(gDevice->CreateCommittedResource(
+			&uploadHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&vertexBufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&vertexBuffer)
+		));
+	}
 
 	// 버텍스 버퍼에 삼각형 정보 복사
 	UINT8* pVertexDataBegin;
@@ -1309,15 +1344,19 @@ void CreateGrassGeometry()
 	vertexBufferView.StrideInBytes = sizeof(Vertex);
 
 	ID3D12Resource* indexBuffer;
-	// 인덱스 버퍼 생성
-	ThrowIfFailed(gDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize),
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&indexBuffer)
-	));
+	{
+		// 인덱스 버퍼 생성
+		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
+		ThrowIfFailed(gDevice->CreateCommittedResource(
+			&uploadHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&indexBufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&indexBuffer)
+		));
+	}
 
 	// 인덱스 버퍼에 삼각형 정보 복사
 	UINT8* pIndexDataBegin;
@@ -1365,15 +1404,19 @@ void CreateWaterGeometry()
 
 	ID3D12Resource* vertexBuffer;
 
-	// 버텍스 버퍼 생성
-	ThrowIfFailed(gDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize),
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&vertexBuffer)
-	));
+	{
+		// 버텍스 버퍼 생성
+		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		auto vertexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+		ThrowIfFailed(gDevice->CreateCommittedResource(
+			&uploadHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&vertexBufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&vertexBuffer)
+		));
+	}
 
 	// 버텍스 버퍼에 삼각형 정보 복사
 	UINT8* pVertexDataBegin;
@@ -1390,15 +1433,19 @@ void CreateWaterGeometry()
 	vertexBufferView.StrideInBytes = sizeof(Vertex);
 
 	ID3D12Resource* indexBuffer;
-	// 인덱스 버퍼 생성
-	ThrowIfFailed(gDevice->CreateCommittedResource(
-		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
-		D3D12_HEAP_FLAG_NONE,
-		&CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize),
-		D3D12_RESOURCE_STATE_GENERIC_READ,
-		nullptr,
-		IID_PPV_ARGS(&indexBuffer)
-	));
+	{
+		auto uploadHeapProp = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+		auto indexBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
+		// 인덱스 버퍼 생성
+		ThrowIfFailed(gDevice->CreateCommittedResource(
+			&uploadHeapProp,
+			D3D12_HEAP_FLAG_NONE,
+			&indexBufferDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ,
+			nullptr,
+			IID_PPV_ARGS(&indexBuffer)
+		));
+	}
 
 	// 인덱스 버퍼에 삼각형 정보 복사
 	UINT8* pIndexDataBegin;
@@ -1420,6 +1467,14 @@ void CreateWaterGeometry()
 	gMeshDatas["water"].indexCount = indexCount;
 
 	FlushCommandQueue();
+}
+
+void CreateObjGeometry()
+{
+	auto fileName = L"cube.obj";
+	auto obj = ObjParse(fileName);
+	auto s = std::format(L"{}: {} faces", fileName, obj.faces.size());
+	OutputDebugString(s.c_str());
 }
 
 void CreateRenderItems()
@@ -1449,7 +1504,7 @@ void CreateRenderItems()
 
 void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems)
 {
-	for each (const auto& ri in renderItems)
+	for (const auto& ri : renderItems)
 	{
 		// 첫 번째 루트 파라미터
 		{
