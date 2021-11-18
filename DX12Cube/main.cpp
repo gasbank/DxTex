@@ -239,9 +239,9 @@ std::map<std::string, int> gTexDiffuseSrvHeapIndices;
 
 std::map<std::string, Material> gMaterials;
 
-std::vector<RenderItem> gOpaqueRenderItems;
-std::vector<RenderItem> gTransparentRenderItems;
-std::vector<RenderItem> gAlphaTestedRenderItems;
+std::vector<std::unique_ptr<RenderItem>> gOpaqueRenderItems;
+std::vector<std::unique_ptr<RenderItem>> gTransparentRenderItems;
+std::vector<std::unique_ptr<RenderItem>> gAlphaTestedRenderItems;
 
 // 초기화
 void CreateRootSignature();
@@ -255,7 +255,7 @@ void CreateGrassGeometry();
 void CreateWaterGeometry();
 void CreateObjGeometry();
 void CreateRenderItems();
-void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems);
+void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<std::unique_ptr<RenderItem>>& renderItems);
 
 // 상수 버퍼
 void InitConstantBuffer();
@@ -770,10 +770,12 @@ void FlushCommandQueue()
 	if (gFence->GetCompletedValue() < gCurrentFence)
 	{
 		HANDLE eventHandle = CreateEvent(nullptr, false, false, nullptr);
-
-		ThrowIfFailed(gFence->SetEventOnCompletion(gCurrentFence, eventHandle));
-		WaitForSingleObject(eventHandle, INFINITE);
-		CloseHandle(eventHandle);
+		if (eventHandle != NULL)
+		{
+			ThrowIfFailed(gFence->SetEventOnCompletion(gCurrentFence, eventHandle));
+			WaitForSingleObject(eventHandle, INFINITE);
+			CloseHandle(eventHandle);
+		}
 	}
 }
 
@@ -1345,6 +1347,8 @@ void CreateObjGeometry()
 	auto obj = ObjParse(fileName);
 	auto s = std::format(L"{}: {} faces", fileName, obj.faces.size());
 	OutputDebugString(s.c_str());
+
+	CreateMeshData(reinterpret_cast<Vertex*>(&obj.vertices[0]), (UINT)obj.vertices.size(), reinterpret_cast<UINT16*>(&obj.indices[0]), (UINT)obj.indices.size(), "rotatedCube");
 }
 
 void CreateRenderItems()
@@ -1354,25 +1358,32 @@ void CreateRenderItems()
 		renderItem->WorldMat = Identity4x4();
 		renderItem->MeshData = &gMeshDatas["grass"];
 		renderItem->Material = &gMaterials["grass"];
-		gOpaqueRenderItems.push_back(*renderItem);
+		gOpaqueRenderItems.push_back(std::move(renderItem));
+	}
+	{
+		auto renderItem = std::make_unique<RenderItem>();
+		renderItem->WorldMat = Identity4x4();
+		renderItem->MeshData = &gMeshDatas["rotatedCube"];
+		renderItem->Material = &gMaterials["box"];
+		gOpaqueRenderItems.push_back(std::move(renderItem));
 	}
 	{
 		auto renderItem = std::make_unique<RenderItem>();
 		renderItem->WorldMat = Identity4x4();
 		renderItem->MeshData = &gMeshDatas["box"];
 		renderItem->Material = &gMaterials["box"];
-		gAlphaTestedRenderItems.push_back(*renderItem);
+		gAlphaTestedRenderItems.push_back(std::move(renderItem));
 	}
 	{
 		auto renderItem = std::make_unique<RenderItem>();
 		renderItem->WorldMat = Identity4x4();
 		renderItem->MeshData = &gMeshDatas["water"];
 		renderItem->Material = &gMaterials["water"];
-		gTransparentRenderItems.push_back(*renderItem);
+		gTransparentRenderItems.push_back(std::move(renderItem));
 	}
 }
 
-void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems)
+void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<std::unique_ptr<RenderItem>>& renderItems)
 {
 	for (const auto& ri : renderItems)
 	{
@@ -1390,15 +1401,15 @@ void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<Rende
 
 			CD3DX12_GPU_DESCRIPTOR_HANDLE tex(gSrvHeap->GetGPUDescriptorHandleForHeapStart());
 			//tex.Offset(4, gCbvHeapSize);
-			auto texIndex = gTexDiffuseSrvHeapIndices[ri.Material->TextureFileName];
+			auto texIndex = gTexDiffuseSrvHeapIndices[ri->Material->TextureFileName];
 			tex.Offset(texIndex, gCbvHeapSize);
 			gCommandList->SetGraphicsRootDescriptorTable(1, tex);
 		}
 
 		// IA는 Input Assembler의 약자
 		gCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		gCommandList->IASetVertexBuffers(0, 1, &ri.MeshData->vertexBufferView);
-		gCommandList->IASetIndexBuffer(&ri.MeshData->indexBufferView);
-		gCommandList->DrawIndexedInstanced(ri.MeshData->indexCount, 1, 0, 0, 0);
+		gCommandList->IASetVertexBuffers(0, 1, &ri->MeshData->vertexBufferView);
+		gCommandList->IASetIndexBuffer(&ri->MeshData->indexBufferView);
+		gCommandList->DrawIndexedInstanced(ri->MeshData->indexCount, 1, 0, 0, 0);
 	}
 }

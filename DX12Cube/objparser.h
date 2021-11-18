@@ -46,7 +46,7 @@ public:
 	std::vector<ObjVertexNormal> vertexTexCoordVectors;
 
 	// 면을 1차원 벡터로 변환.
-	std::vector<int> indices;
+	std::vector<UINT16> indices;
 	std::vector<int> vertexTexCoords;
 	std::vector<int> vertexNormals;
 
