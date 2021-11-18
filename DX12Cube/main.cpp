@@ -746,8 +746,8 @@ void PopulateCommandList()
 	gCommandList->SetPipelineState(gPSOs["opaque"]); // gCommandList->Reset() 시 지정하므로 다시 지정하지 않아도 됨
 	DrawRenderItems(gCommandList, gOpaqueRenderItems);
 
-	//gCommandList->SetPipelineState(gPSOs["alphaTested"]);
-	//DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
+	gCommandList->SetPipelineState(gPSOs["alphaTested"]);
+	DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
 
 	gCommandList->SetPipelineState(gPSOs["transparent"]);
 	DrawRenderItems(gCommandList, gTransparentRenderItems);
@@ -944,7 +944,7 @@ void CreatePSO()
 	opaquePSODesc.DepthStencilState.DepthEnable = true;
 	opaquePSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
 	opaquePSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-	opaquePSODesc.DepthStencilState.StencilEnable = true;
+	/*opaquePSODesc.DepthStencilState.StencilEnable = true;
 	opaquePSODesc.DepthStencilState.StencilReadMask = UINT8_MAX;
 	opaquePSODesc.DepthStencilState.StencilWriteMask = UINT8_MAX;
 	opaquePSODesc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
@@ -954,7 +954,7 @@ void CreatePSO()
 	opaquePSODesc.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
 	opaquePSODesc.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
 	opaquePSODesc.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
-	opaquePSODesc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_EQUAL;
+	opaquePSODesc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_EQUAL;*/
 	opaquePSODesc.InputLayout = { inputElementDesc, _countof(inputElementDesc) };
 	opaquePSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	opaquePSODesc.NumRenderTargets = 1;
@@ -1380,27 +1380,10 @@ void CreateGrassGeometry()
 	FlushCommandQueue();
 }
 
-void CreateWaterGeometry()
+void CreateMeshData(const Vertex* vertices, UINT vertexCount, const UINT16* indices, UINT indexCount, const char* meshName)
 {
-	Vertex vertices[] =
-	{
-		// top face
-		{{-100.0f, 5.0f, -100.0f}, {0.0f, 1.0f, 0.0f}, {0, 1}},
-		{{-100.0f, 5.0f, +100.0f}, {0.0f, 1.0f, 0.0f}, {0, 0}},
-		{{+100.0f, 5.0f, +100.0f}, {0.0f, 1.0f, 0.0f}, {1, 0}},
-		{{+100.0f, 5.0f, -100.0f}, {0.0f, 1.0f, 0.0f}, {1, 1}},
-	};
-
-	UINT16 indices[] =
-	{
-		// front face
-		0, 1, 2,
-		0, 2, 3,
-	};
-
-	const UINT vertexBufferSize = sizeof(vertices);
-	const UINT indexBufferSize = sizeof(indices);
-	UINT indexCount = _countof(indices);
+	const UINT vertexBufferSize = sizeof(Vertex) * vertexCount;
+	const UINT indexBufferSize = sizeof(UINT16) * indexCount;
 
 	ID3D12Resource* vertexBuffer;
 
@@ -1422,7 +1405,7 @@ void CreateWaterGeometry()
 	UINT8* pVertexDataBegin;
 	CD3DX12_RANGE readRange(0, 0);
 	ThrowIfFailed(vertexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pVertexDataBegin)));
-	memcpy(pVertexDataBegin, vertices, sizeof(vertices));
+	memcpy(pVertexDataBegin, vertices, vertexBufferSize);
 	vertexBuffer->Unmap(0, nullptr);
 
 	D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
@@ -1450,7 +1433,7 @@ void CreateWaterGeometry()
 	// 인덱스 버퍼에 삼각형 정보 복사
 	UINT8* pIndexDataBegin;
 	ThrowIfFailed(indexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pIndexDataBegin)));
-	memcpy(pIndexDataBegin, indices, sizeof(indices));
+	memcpy(pIndexDataBegin, indices, indexBufferSize);
 	indexBuffer->Unmap(0, nullptr);
 
 	D3D12_INDEX_BUFFER_VIEW indexBufferView;
@@ -1460,13 +1443,35 @@ void CreateWaterGeometry()
 	indexBufferView.SizeInBytes = indexBufferSize;
 	indexBufferView.Format = DXGI_FORMAT_R16_UINT;
 
-	gMeshDatas["water"].vertexBuffer = vertexBuffer;
-	gMeshDatas["water"].vertexBufferView = vertexBufferView;
-	gMeshDatas["water"].indexBuffer = indexBuffer;
-	gMeshDatas["water"].indexBufferView = indexBufferView;
-	gMeshDatas["water"].indexCount = indexCount;
+	auto& meshData = gMeshDatas[meshName];
+	meshData.vertexBuffer = vertexBuffer;
+	meshData.vertexBufferView = vertexBufferView;
+	meshData.indexBuffer = indexBuffer;
+	meshData.indexBufferView = indexBufferView;
+	meshData.indexCount = indexCount;
 
 	FlushCommandQueue();
+}
+
+void CreateWaterGeometry()
+{
+	Vertex vertices[] =
+	{
+		// top face
+		{{-100.0f, 5.0f, -100.0f}, {0.0f, 1.0f, 0.0f}, {0, 1}},
+		{{-100.0f, 5.0f, +100.0f}, {0.0f, 1.0f, 0.0f}, {0, 0}},
+		{{+100.0f, 5.0f, +100.0f}, {0.0f, 1.0f, 0.0f}, {1, 0}},
+		{{+100.0f, 5.0f, -100.0f}, {0.0f, 1.0f, 0.0f}, {1, 1}},
+	};
+
+	UINT16 indices[] =
+	{
+		// front face
+		0, 1, 2,
+		0, 2, 3,
+	};
+
+	CreateMeshData(vertices, _countof(vertices), indices, _countof(indices), "water");
 }
 
 void CreateObjGeometry()
