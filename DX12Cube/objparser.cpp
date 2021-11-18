@@ -88,6 +88,7 @@ ObjModel ObjParse(LPCWSTR fileName)
 						// 개수가 3개이고 슬래시가 2개 => vt, vn
 						if (vInfos.size() == 3)
 						{
+							f.vts[i] = stoi(vInfos[1]);
 							f.vns[i] = stoi(vInfos[2]);
 						}
 						else

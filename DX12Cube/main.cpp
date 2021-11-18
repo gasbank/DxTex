@@ -1348,7 +1348,33 @@ void CreateObjGeometry()
 	auto s = std::format(L"{}: {} faces", fileName, obj.faces.size());
 	OutputDebugString(s.c_str());
 
-	CreateMeshData(reinterpret_cast<Vertex*>(&obj.vertices[0]), (UINT)obj.vertices.size(), reinterpret_cast<UINT16*>(&obj.indices[0]), (UINT)obj.indices.size(), "rotatedCube");
+	std::vector<Vertex> vertices;
+	std::vector<UINT16> indices;
+	UINT16 ind = 0;
+	for (const auto& f : obj.faces)
+	{
+		for (auto i = 0; i < 3; i++)
+		{
+			const auto& v = obj.vertices[f.vs[i] - 1];
+			const auto& vn = obj.vertexNormalVectors[f.vns[i] - 1];
+			const auto& vt = obj.vertexTexCoordVectors[f.vts[i] - 1];
+
+			Vertex vertex;
+			vertex.position.x = v.x;
+			vertex.position.y = v.y;
+			vertex.position.z = v.z;
+			vertex.normal.x = vn.x;
+			vertex.normal.y = vn.y;
+			vertex.normal.z = vn.z;
+			vertex.tex.x = vt.x;
+			vertex.tex.y = vt.y;
+			vertices.push_back(vertex);
+			indices.push_back(ind);
+			ind++;
+		}
+	}
+
+	CreateMeshData(&vertices[0], (UINT)vertices.size(), &indices[0], (UINT)indices.size(), "rotatedCube");
 }
 
 void CreateRenderItems()
