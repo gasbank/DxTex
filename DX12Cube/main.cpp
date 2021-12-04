@@ -113,7 +113,7 @@ UINT gCurrentBufferIndex = 0;
 // 버퍼 리소스의 배열 - 스왑 체인과 연결됨
 ID3D12Resource* gRenderBuffer[SwapChainBufferCount] = { nullptr };
 // 깊이 스텐실 버퍼 리소스 - 깊이 스텐실 힙과 연결됨
-//ID3D12Resource* gDepthStencilBuffer = nullptr;
+ID3D12Resource* gDepthStencilBuffer = nullptr;
 
 // rtv, dsv, cbv힙, 각 핸들은 그때그때 만들어 쓴다.
 ID3D12DescriptorHeap* gRtvHeap = nullptr;
@@ -251,6 +251,9 @@ void CreateGrassGeometry();
 void CreateWaterGeometry();
 void CreateRenderItems();
 void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems);
+
+// 깊이 스텐실 버퍼
+void InitDepthStencilBuffer();
 
 // 상수 버퍼
 void InitConstantBuffer();
@@ -456,6 +459,7 @@ HRESULT InitD3D(HWND hWnd)
 	CreateWaterGeometry();
 	CreateRenderItems();
 
+	InitDepthStencilBuffer();
 	InitConstantBuffer();
 
 	InitShaderResources();
@@ -509,6 +513,13 @@ void CreateHeaps()
 	rtvHeapDesc.NumDescriptors = SwapChainBufferCount;
 
 	ThrowIfFailed(gDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&gRtvHeap)));
+
+	// dsv
+	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	dsvHeapDesc.NumDescriptors = 1;
+
+	ThrowIfFailed(gDevice->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&gDsvHeap)));
 
 	// cbv
 	D3D12_DESCRIPTOR_HEAP_DESC cbvHeapDesc = {};
@@ -665,9 +676,12 @@ void PopulateCommandList()
 
 	// rtv 처리
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(gRtvHeap->GetCPUDescriptorHandleForHeapStart(), gCurrentBufferIndex, gRtvHeapSize);
+	CD3DX12_CPU_DESCRIPTOR_HANDLE dsvHandle(gDsvHeap->GetCPUDescriptorHandleForHeapStart(), 0, gDsvHeapSize);
 
 	// OMSetRenderTargets은 render target을 그리기 전에 미리 핸들을 먼저 얻은 다음 호출해야 한다.
-	gCommandList->OMSetRenderTargets(1, &rtvHandle, false, nullptr);
+	gCommandList->OMSetRenderTargets(1, &rtvHandle, false, &dsvHandle);
+
+	gCommandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
 	gCommandList->ResourceBarrier(1,
 		&CD3DX12_RESOURCE_BARRIER::Transition(
@@ -738,6 +752,7 @@ void Release()
 	}
 
 	COM_RELEASE(gConstantBuffer);
+	COM_RELEASE(gDepthStencilBuffer);
 
 	for each (auto var in gMeshDatas)
 	{
@@ -769,6 +784,7 @@ void Release()
 
 	COM_RELEASE(gSrvHeap);
 	COM_RELEASE(gCbvHeap);
+	COM_RELEASE(gDsvHeap);
 	COM_RELEASE(gRtvHeap);
 
 	COM_RELEASE(gCommandQueue);
@@ -878,8 +894,20 @@ void CreatePSO()
 	opaquePSODesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	opaquePSODesc.SampleMask = UINT_MAX;
 	opaquePSODesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-	opaquePSODesc.DepthStencilState.DepthEnable = false;
+	opaquePSODesc.DepthStencilState.DepthEnable = true;
+	opaquePSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	opaquePSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
 	opaquePSODesc.DepthStencilState.StencilEnable = false;
+	opaquePSODesc.DepthStencilState.StencilReadMask = 0xff;
+	opaquePSODesc.DepthStencilState.StencilWriteMask = 0xff;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	opaquePSODesc.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+	opaquePSODesc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
 	opaquePSODesc.InputLayout = { inputElementDesc, _countof(inputElementDesc) };
 	opaquePSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	opaquePSODesc.NumRenderTargets = 1;
@@ -916,6 +944,43 @@ void CreatePSO()
 	alphaTestedPSODesc.PS = CD3DX12_SHADER_BYTECODE(gShaders["alphaTestedPS"]);
 	alphaTestedPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	ThrowIfFailed(gDevice->CreateGraphicsPipelineState(&alphaTestedPSODesc, IID_PPV_ARGS(&gPSOs["alphaTested"])));
+}
+
+void InitDepthStencilBuffer()
+{
+	D3D12_RESOURCE_DESC resourceDesc;
+	resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	resourceDesc.Alignment = 0;
+	resourceDesc.Width = gClientWidth;
+	resourceDesc.Height = gClientHeight;
+	resourceDesc.DepthOrArraySize = 1;
+	resourceDesc.MipLevels = 1;
+	resourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	resourceDesc.SampleDesc.Count = 1;
+	resourceDesc.SampleDesc.Quality = 0;
+	resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE clearValue;
+	clearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	clearValue.DepthStencil.Depth = 1.0f;
+	clearValue.DepthStencil.Stencil = 0;
+	
+	ThrowIfFailed(gDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT),
+		D3D12_HEAP_FLAG_NONE,
+		&resourceDesc,
+		D3D12_RESOURCE_STATE_DEPTH_WRITE,
+		&clearValue,
+		IID_PPV_ARGS(&gDepthStencilBuffer)
+	));
+
+	D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc;
+	viewDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	viewDesc.Flags = D3D12_DSV_FLAG_NONE;
+	viewDesc.Texture2D.MipSlice = 0;
+	gDevice->CreateDepthStencilView(gDepthStencilBuffer, &viewDesc, gDsvHeap->GetCPUDescriptorHandleForHeapStart());
 }
 
 void InitConstantBuffer()
