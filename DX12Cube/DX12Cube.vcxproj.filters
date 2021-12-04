@@ -13,6 +13,15 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Resource Files\Textures">
+      <UniqueIdentifier>{c912c6af-4757-44b1-a916-56eca70000cc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Shaders">
+      <UniqueIdentifier>{8bd955e4-6f3b-4e00-ad3a-d1a8efc7a48f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource Files\Meshes">
+      <UniqueIdentifier>{abebd7cf-bfee-436f-980c-5c905e22d62b}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="d3dx12.h">
@@ -37,8 +46,33 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="scribble.dds">
-      <Filter>Resource Files</Filter>
+    <Image Include="WireFence.dds">
+      <Filter>Resource Files\Textures</Filter>
     </Image>
+    <Image Include="water.dds">
+      <Filter>Resource Files\Textures</Filter>
+    </Image>
+    <Image Include="grass.dds">
+      <Filter>Resource Files\Textures</Filter>
+    </Image>
+    <Image Include="scribble.dds">
+      <Filter>Resource Files\Textures</Filter>
+    </Image>
+    <Image Include="bricks.dds">
+      <Filter>Resource Files\Textures</Filter>
+    </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <Object Include="cube.obj">
+      <Filter>Resource Files\Meshes</Filter>
+    </Object>
+    <Object Include="monkey.obj">
+      <Filter>Resource Files\Meshes</Filter>
+    </Object>
+  </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="shaders.hlsl">
+      <Filter>Resource Files\Shaders</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>
