@@ -1344,7 +1344,7 @@ void CreateWaterGeometry()
 void CreateObjFileGeometry(const wchar_t* fileName, const char* meshName)
 {
 	auto obj = ObjParse(fileName);
-	auto s = std::format(L"{}: {} faces", fileName, obj.faces.size());
+	auto s = std::format(L"{}: {} faces\n", fileName, obj.faces.size());
 	OutputDebugString(s.c_str());
 
 	std::vector<Vertex> vertices;
