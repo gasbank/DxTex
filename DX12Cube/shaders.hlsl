@@ -47,11 +47,18 @@ PSInput VSMain(float4 position : POSITION, float3 normal : NORMAL, float2 tex : 
 {
     PSInput result;
 
+
+#ifdef NDC // use normalized device coordinates
+    result.position = position;
+    result.normal = normal;
+#else
     float4 posW = mul(float4(position.xyz, 1.0f), world);
     result.posW = posW.xyz;
 
     result.position = mul(position, worldViewProjection);
     result.normal = mul(normal, (float3x3)worldViewProjection);
+#endif
+
     result.tex = tex;
 
     return result;

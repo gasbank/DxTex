@@ -239,6 +239,7 @@ std::map<std::string, Material> gMaterials;
 std::vector<RenderItem> gOpaqueRenderItems;
 std::vector<RenderItem> gTransparentRenderItems;
 std::vector<RenderItem> gAlphaTestedRenderItems;
+std::vector<RenderItem> gNdcRenderItems;
 
 // 초기화
 void CreateRootSignature();
@@ -249,6 +250,7 @@ void CreateMaterials();
 void CreateBoxGeometry();
 void CreateGrassGeometry();
 void CreateWaterGeometry();
+void CreateCenterSquareGeometry();
 void CreateRenderItems();
 void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems);
 
@@ -457,6 +459,8 @@ HRESULT InitD3D(HWND hWnd)
 	CreateBoxGeometry();
 	CreateGrassGeometry();
 	CreateWaterGeometry();
+	CreateCenterSquareGeometry();
+
 	CreateRenderItems();
 
 	InitDepthStencilBuffer();
@@ -696,13 +700,17 @@ void PopulateCommandList()
 
 	DrawRenderItems(gCommandList, gOpaqueRenderItems);
 
-	gCommandList->SetPipelineState(gPSOs["alphaTested"]);
+	/*gCommandList->SetPipelineState(gPSOs["alphaTested"]);
 
 	DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
 
 	gCommandList->SetPipelineState(gPSOs["transparent"]);
 
-	DrawRenderItems(gCommandList, gTransparentRenderItems);
+	DrawRenderItems(gCommandList, gTransparentRenderItems);*/
+
+	gCommandList->SetPipelineState(gPSOs["ndc"]);
+
+	DrawRenderItems(gCommandList, gNdcRenderItems);
 
 	gCommandList->ResourceBarrier(1,
 		&CD3DX12_RESOURCE_BARRIER::Transition(
@@ -844,6 +852,7 @@ void CreatePSO()
 	};
 
 	ID3DBlob* vertexShader = nullptr;
+	ID3DBlob* ndcVS = nullptr;
 	ID3DBlob* pixelShader = nullptr;
 	ID3DBlob* alphaTestedPS = nullptr;
 	ID3DBlob* error = nullptr;
@@ -855,24 +864,41 @@ void CreatePSO()
 
 	const D3D_SHADER_MACRO defines[] =
 	{
-		"FOG", "1",
+		//"FOG", "1",
 		NULL, NULL
 	};
 
 	const D3D_SHADER_MACRO alphaTestDefines[] =
 	{
-		"FOG", "1",
+		//"FOG", "1",
 		"ALPHA_TEST", "1",
 		NULL, NULL
 	};
 
+	LPVOID errorBufferPtr = nullptr;
+
 	// 불투명, 투명, 알파테스트 쉐이더 및 pso 생성
+	{
+		D3DCompileFromFile(L"shaders.hlsl", nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &error);
+		errorBufferPtr = error->GetBufferPointer();
+		OutputDebugStringA((LPCSTR)errorBufferPtr);
 
-	D3DCompileFromFile(L"shaders.hlsl", nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &error);
-	auto errorBufferPtr = error->GetBufferPointer();
-	OutputDebugStringA((LPCSTR)errorBufferPtr);
+		gShaders["VS"] = vertexShader;
+	}
 
-	gShaders["VS"] = vertexShader;
+	{
+		const D3D_SHADER_MACRO defines[] =
+		{
+			"NDC", "",
+			NULL, NULL
+		};
+
+		D3DCompileFromFile(L"shaders.hlsl", defines, nullptr, "VSMain", "vs_5_0", compileFlags, 0, &ndcVS, &error);
+		errorBufferPtr = error->GetBufferPointer();
+		OutputDebugStringA((LPCSTR)errorBufferPtr);
+
+		gShaders["ndcVS"] = ndcVS;
+	}
 
 	D3DCompileFromFile(L"shaders.hlsl", defines, nullptr, "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &error);
 	errorBufferPtr = error->GetBufferPointer();
@@ -904,10 +930,7 @@ void CreatePSO()
 	opaquePSODesc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
 	opaquePSODesc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
 	opaquePSODesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
-	opaquePSODesc.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
-	opaquePSODesc.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
-	opaquePSODesc.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
-	opaquePSODesc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	opaquePSODesc.DepthStencilState.BackFace = opaquePSODesc.DepthStencilState.FrontFace;
 	opaquePSODesc.InputLayout = { inputElementDesc, _countof(inputElementDesc) };
 	opaquePSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 	opaquePSODesc.NumRenderTargets = 1;
@@ -944,6 +967,11 @@ void CreatePSO()
 	alphaTestedPSODesc.PS = CD3DX12_SHADER_BYTECODE(gShaders["alphaTestedPS"]);
 	alphaTestedPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	ThrowIfFailed(gDevice->CreateGraphicsPipelineState(&alphaTestedPSODesc, IID_PPV_ARGS(&gPSOs["alphaTested"])));
+
+	// NDC
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC ndcPSODesc = opaquePSODesc;
+	ndcPSODesc.VS = CD3DX12_SHADER_BYTECODE(gShaders["ndcVS"]);
+	ThrowIfFailed(gDevice->CreateGraphicsPipelineState(&ndcPSODesc, IID_PPV_ARGS(&gPSOs["ndc"])));
 }
 
 void InitDepthStencilBuffer()
@@ -955,14 +983,14 @@ void InitDepthStencilBuffer()
 	resourceDesc.Height = gClientHeight;
 	resourceDesc.DepthOrArraySize = 1;
 	resourceDesc.MipLevels = 1;
-	resourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	resourceDesc.Format = gDepthStencilFormat;
 	resourceDesc.SampleDesc.Count = 1;
 	resourceDesc.SampleDesc.Quality = 0;
 	resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 	resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
 	D3D12_CLEAR_VALUE clearValue;
-	clearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	clearValue.Format = gDepthStencilFormat;
 	clearValue.DepthStencil.Depth = 1.0f;
 	clearValue.DepthStencil.Stencil = 0;
 	
@@ -976,7 +1004,7 @@ void InitDepthStencilBuffer()
 	));
 
 	D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc;
-	viewDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	viewDesc.Format = gDepthStencilFormat;
 	viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
 	viewDesc.Flags = D3D12_DSV_FLAG_NONE;
 	viewDesc.Texture2D.MipSlice = 0;
@@ -1376,6 +1404,87 @@ void CreateWaterGeometry()
 	FlushCommandQueue();
 }
 
+void CreateCenterSquareGeometry()
+{
+	Vertex vertices[] =
+	{
+		{{-0.5f, 0.5f, 0}, {0.0f, 0.0f, -1.0f}, {0, 1}},
+		{{ 0.5f, 0.5f, 0}, {0.0f, 0.0f, -1.0f}, {1, 1}},
+		{{-0.5f,-0.5f, 0}, {0.0f, 0.0f, -1.0f}, {0, 0}},
+		{{ 0.5f,-0.5f, 0}, {0.0f, 0.0f, -1.0f}, {1, 0}},
+	};
+
+	UINT16 indices[] =
+	{
+		0, 1, 2,
+		2, 1, 3,
+	};
+
+	const UINT vertexBufferSize = sizeof(vertices);
+	const UINT indexBufferSize = sizeof(indices);
+	UINT indexCount = _countof(indices);
+
+	ID3D12Resource* vertexBuffer;
+
+	// 버텍스 버퍼 생성
+	ThrowIfFailed(gDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&vertexBuffer)
+	));
+
+	// 버텍스 버퍼에 삼각형 정보 복사
+	UINT8* pVertexDataBegin;
+	CD3DX12_RANGE readRange(0, 0);
+	ThrowIfFailed(vertexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pVertexDataBegin)));
+	memcpy(pVertexDataBegin, vertices, sizeof(vertices));
+	vertexBuffer->Unmap(0, nullptr);
+
+	D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+
+	// 버텍스 버퍼 뷰 생성
+	vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+	vertexBufferView.SizeInBytes = vertexBufferSize;
+	vertexBufferView.StrideInBytes = sizeof(Vertex);
+
+	ID3D12Resource* indexBuffer;
+	// 인덱스 버퍼 생성
+	ThrowIfFailed(gDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&indexBuffer)
+	));
+
+	// 인덱스 버퍼에 삼각형 정보 복사
+	UINT8* pIndexDataBegin;
+	ThrowIfFailed(indexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pIndexDataBegin)));
+	memcpy(pIndexDataBegin, indices, sizeof(indices));
+	indexBuffer->Unmap(0, nullptr);
+
+	D3D12_INDEX_BUFFER_VIEW indexBufferView;
+
+	// 인덱스 버퍼 뷰 생성
+	indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
+	indexBufferView.SizeInBytes = indexBufferSize;
+	indexBufferView.Format = DXGI_FORMAT_R16_UINT;
+
+	auto geometryName = "centerSquare";
+
+	gMeshDatas[geometryName].vertexBuffer = vertexBuffer;
+	gMeshDatas[geometryName].vertexBufferView = vertexBufferView;
+	gMeshDatas[geometryName].indexBuffer = indexBuffer;
+	gMeshDatas[geometryName].indexBufferView = indexBufferView;
+	gMeshDatas[geometryName].indexCount = indexCount;
+
+	FlushCommandQueue();
+}
+
 void CreateRenderItems()
 {
 	{
@@ -1399,6 +1508,13 @@ void CreateRenderItems()
 		renderItem->Material = &gMaterials["water"];
 		gTransparentRenderItems.push_back(*renderItem);
 	}
+	{
+		auto renderItem = std::make_unique<RenderItem>();
+		renderItem->WorldMat = Identity4x4();
+		renderItem->MeshData = &gMeshDatas["centerSquare"];
+		renderItem->Material = nullptr;
+		gNdcRenderItems.push_back(*renderItem);
+	}
 }
 
 void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems)
@@ -1414,14 +1530,17 @@ void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<Rende
 
 		// 두 번째 루트 파라미터
 		{
-			ID3D12DescriptorHeap* heaps[] = { gSrvHeap };
-			gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+			if (ri.Material != nullptr)
+			{
+				ID3D12DescriptorHeap* heaps[] = { gSrvHeap };
+				gCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
 
-			CD3DX12_GPU_DESCRIPTOR_HANDLE tex(gSrvHeap->GetGPUDescriptorHandleForHeapStart());
-			//tex.Offset(4, gCbvHeapSize);
-			auto texIndex = gTexDiffuseSrvHeapIndices[ri.Material->TextureFileName];
-			tex.Offset(texIndex, gCbvHeapSize);
-			gCommandList->SetGraphicsRootDescriptorTable(1, tex);
+				CD3DX12_GPU_DESCRIPTOR_HANDLE tex(gSrvHeap->GetGPUDescriptorHandleForHeapStart());
+				//tex.Offset(4, gCbvHeapSize);
+				auto texIndex = gTexDiffuseSrvHeapIndices[ri.Material->TextureFileName];
+				tex.Offset(texIndex, gCbvHeapSize);
+				gCommandList->SetGraphicsRootDescriptorTable(1, tex);
+			}
 		}
 
 		gCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
