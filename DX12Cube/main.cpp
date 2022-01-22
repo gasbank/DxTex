@@ -267,6 +267,7 @@ void InitShaderResources();
 struct ObjectConstantBuffer
 {
 	XMFLOAT4X4 World;
+	XMFLOAT4X4 WorldCenterSquare;
 	XMFLOAT4X4 WorldViewProjection;
 	XMFLOAT3 EyePos;
 	float padding2; // TexOffset을 x,y 모두 적용하려면 padding2를 추가해서 4개 단위로 기록해야 한다.
@@ -278,8 +279,9 @@ struct ObjectConstantBuffer
 	float gFogStart;
 	float gFogRange;
 
-	char padding[256
+	char padding[512
 		- sizeof(World)
+		- sizeof(WorldCenterSquare)
 		- sizeof(WorldViewProjection)
 		- sizeof(EyePos)
 		- sizeof(TexOffset)
@@ -613,6 +615,8 @@ void CreateHeapResources()
 	}
 }
 
+static UINT64 frameIndex;
+
 void Update()
 {
 	if (isLeftKeyPressed)
@@ -644,6 +648,10 @@ void Update()
 	XMMATRIX world = XMLoadFloat4x4(&gWorld);
 	auto worldViewProjection = XMMatrixTranspose(world * view * proj);
 
+	frameIndex++;
+	XMStoreFloat4x4(&gConstantBufferData.WorldCenterSquare, XMMatrixTranspose(XMMatrixTranslation(sinf(frameIndex / 1000.0f), 0.5f, 0)));
+
+	XMFLOAT4X4 gWorld = Identity4x4();
 	XMStoreFloat4x4(&gConstantBufferData.World, world);
 	XMStoreFloat4x4(&gConstantBufferData.WorldViewProjection, worldViewProjection);
 	XMStoreFloat3(&gConstantBufferData.EyePos, pos);
@@ -696,10 +704,7 @@ void PopulateCommandList()
 	gCommandList->ClearRenderTargetView(rtvHandle, Colors::AliceBlue, 0, nullptr);
 
 	// 각종 물체 그리기 및 PSO 변경
-	//gCommandList->SetPipelineState(gPSOs["opaque"]); // 이미 위에서 지정함.
-
-	DrawRenderItems(gCommandList, gOpaqueRenderItems);
-
+	
 	/*gCommandList->SetPipelineState(gPSOs["alphaTested"]);
 
 	DrawRenderItems(gCommandList, gAlphaTestedRenderItems);
@@ -709,8 +714,11 @@ void PopulateCommandList()
 	DrawRenderItems(gCommandList, gTransparentRenderItems);*/
 
 	gCommandList->SetPipelineState(gPSOs["ndc"]);
-
+	gCommandList->OMSetStencilRef(255);
 	DrawRenderItems(gCommandList, gNdcRenderItems);
+
+	gCommandList->SetPipelineState(gPSOs["opaque"]);
+	DrawRenderItems(gCommandList, gOpaqueRenderItems);
 
 	gCommandList->ResourceBarrier(1,
 		&CD3DX12_RESOURCE_BARRIER::Transition(
@@ -923,13 +931,13 @@ void CreatePSO()
 	opaquePSODesc.DepthStencilState.DepthEnable = true;
 	opaquePSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
 	opaquePSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-	opaquePSODesc.DepthStencilState.StencilEnable = false;
+	opaquePSODesc.DepthStencilState.StencilEnable = true;
 	opaquePSODesc.DepthStencilState.StencilReadMask = 0xff;
 	opaquePSODesc.DepthStencilState.StencilWriteMask = 0xff;
 	opaquePSODesc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
 	opaquePSODesc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
 	opaquePSODesc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
-	opaquePSODesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	opaquePSODesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_EQUAL;
 	opaquePSODesc.DepthStencilState.BackFace = opaquePSODesc.DepthStencilState.FrontFace;
 	opaquePSODesc.InputLayout = { inputElementDesc, _countof(inputElementDesc) };
 	opaquePSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -971,6 +979,16 @@ void CreatePSO()
 	// NDC
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC ndcPSODesc = opaquePSODesc;
 	ndcPSODesc.VS = CD3DX12_SHADER_BYTECODE(gShaders["ndcVS"]);
+	ndcPSODesc.BlendState.RenderTarget[0].RenderTargetWriteMask = 0; // 실제 화면에 렌더링되는 것이 아니다
+	ndcPSODesc.DepthStencilState.DepthEnable = false;
+	ndcPSODesc.DepthStencilState.StencilEnable = true;
+	ndcPSODesc.DepthStencilState.StencilReadMask = 0xff;
+	ndcPSODesc.DepthStencilState.StencilWriteMask = 0xff;
+	ndcPSODesc.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+	ndcPSODesc.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+	ndcPSODesc.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_REPLACE;
+	ndcPSODesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	ndcPSODesc.DepthStencilState.BackFace = opaquePSODesc.DepthStencilState.FrontFace;
 	ThrowIfFailed(gDevice->CreateGraphicsPipelineState(&ndcPSODesc, IID_PPV_ARGS(&gPSOs["ndc"])));
 }
 

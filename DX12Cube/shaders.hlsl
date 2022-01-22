@@ -15,6 +15,7 @@ SamplerState gSampler : register(s0) {};
 cbuffer ObjectConstantBuffer : register(b0)
 {
     float4x4 world;
+    float4x4 worldCenterSquare;
     float4x4 worldViewProjection;
     float3 eyePos;
     float2 texOffset;
@@ -49,7 +50,7 @@ PSInput VSMain(float4 position : POSITION, float3 normal : NORMAL, float2 tex : 
 
 
 #ifdef NDC // use normalized device coordinates
-    result.position = position;
+    result.position = mul(float4(position.xyz, 1.0f), worldCenterSquare);
     result.normal = normal;
 #else
     float4 posW = mul(float4(position.xyz, 1.0f), world);
