@@ -11,6 +11,7 @@
 #include <map>
 #include <comdef.h>
 #include "DDSTextureLoader.h"
+#include "objparser.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -251,6 +252,7 @@ void CreateBoxGeometry();
 void CreateGrassGeometry();
 void CreateWaterGeometry();
 void CreateCenterSquareGeometry();
+void CreateMonkeyGeometry();
 void CreateRenderItems();
 void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem>& renderItems);
 
@@ -462,6 +464,7 @@ HRESULT InitD3D(HWND hWnd)
 	CreateGrassGeometry();
 	CreateWaterGeometry();
 	CreateCenterSquareGeometry();
+	CreateMonkeyGeometry();
 
 	CreateRenderItems();
 
@@ -1031,7 +1034,7 @@ void InitDepthStencilBuffer()
 
 void InitConstantBuffer()
 {
-	static_assert(sizeof(ObjectConstantBuffer) % 256 == 0, "constant buffer must be 256 byte");
+	static_assert(sizeof(ObjectConstantBuffer) % 256 == 0, "constant buffer must be multiple of 256 byte");
 	const UINT constantBufferSize = sizeof(ObjectConstantBuffer);
 
 	ThrowIfFailed(gDevice->CreateCommittedResource(
@@ -1503,6 +1506,109 @@ void CreateCenterSquareGeometry()
 	FlushCommandQueue();
 }
 
+void CreateMonkeyGeometry()
+{/*
+	Vertex vertices[] =
+	{
+		{{-0.5f, 0.5f, 0}, {0.0f, 0.0f, -1.0f}, {0, 1}},
+		{{ 0.5f, 0.5f, 0}, {0.0f, 0.0f, -1.0f}, {1, 1}},
+		{{-0.5f,-0.5f, 0}, {0.0f, 0.0f, -1.0f}, {0, 0}},
+		{{ 0.5f,-0.5f, 0}, {0.0f, 0.0f, -1.0f}, {1, 0}},
+	};
+
+	UINT16 indices[] =
+	{
+		0, 1, 2,
+		2, 1, 3,
+	};*/
+
+	auto objModel = ObjParse(L"monkey.obj");
+	std::vector<Vertex> vertices;
+	for (const auto& vert : objModel.vertices)
+	{	
+		Vertex v;
+		v.position.x = vert.x;
+		v.position.y = vert.y;
+		v.position.z = vert.z;
+		v.normal.x = 0;
+		v.normal.y = 0;
+		v.normal.z = 0;
+		v.tex.x = 0;
+		v.tex.y = 0;
+		vertices.push_back(v);
+	}
+
+	std::vector<UINT16> indices;
+	for (const auto& ind : objModel.indices)
+	{
+		indices.push_back(ind - 1);
+	}
+
+	const UINT vertexBufferSize = vertices.size() * sizeof(Vertex);
+	const UINT indexBufferSize = indices.size() * sizeof(UINT16);
+	UINT indexCount = indices.size();
+
+	ID3D12Resource* vertexBuffer;
+
+	// 버텍스 버퍼 생성
+	ThrowIfFailed(gDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&vertexBuffer)
+	));
+
+	// 버텍스 버퍼에 삼각형 정보 복사
+	UINT8* pVertexDataBegin;
+	CD3DX12_RANGE readRange(0, 0);
+	ThrowIfFailed(vertexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pVertexDataBegin)));
+	memcpy(pVertexDataBegin, &vertices[0], vertexBufferSize);
+	vertexBuffer->Unmap(0, nullptr);
+
+	D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+
+	// 버텍스 버퍼 뷰 생성
+	vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+	vertexBufferView.SizeInBytes = vertexBufferSize;
+	vertexBufferView.StrideInBytes = sizeof(Vertex);
+
+	ID3D12Resource* indexBuffer;
+	// 인덱스 버퍼 생성
+	ThrowIfFailed(gDevice->CreateCommittedResource(
+		&CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD),
+		D3D12_HEAP_FLAG_NONE,
+		&CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize),
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		nullptr,
+		IID_PPV_ARGS(&indexBuffer)
+	));
+
+	// 인덱스 버퍼에 삼각형 정보 복사
+	UINT8* pIndexDataBegin;
+	ThrowIfFailed(indexBuffer->Map(0, nullptr, reinterpret_cast<void**>(&pIndexDataBegin)));
+	memcpy(pIndexDataBegin, &indices[0], indexBufferSize);
+	indexBuffer->Unmap(0, nullptr);
+
+	D3D12_INDEX_BUFFER_VIEW indexBufferView;
+
+	// 인덱스 버퍼 뷰 생성
+	indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
+	indexBufferView.SizeInBytes = indexBufferSize;
+	indexBufferView.Format = DXGI_FORMAT_R16_UINT;
+
+	auto geometryName = "monkey";
+
+	gMeshDatas[geometryName].vertexBuffer = vertexBuffer;
+	gMeshDatas[geometryName].vertexBufferView = vertexBufferView;
+	gMeshDatas[geometryName].indexBuffer = indexBuffer;
+	gMeshDatas[geometryName].indexBufferView = indexBufferView;
+	gMeshDatas[geometryName].indexCount = indexCount;
+
+	FlushCommandQueue();
+}
+
 void CreateRenderItems()
 {
 	{
@@ -1529,7 +1635,7 @@ void CreateRenderItems()
 	{
 		auto renderItem = std::make_unique<RenderItem>();
 		renderItem->WorldMat = Identity4x4();
-		renderItem->MeshData = &gMeshDatas["centerSquare"];
+		renderItem->MeshData = &gMeshDatas["monkey"];
 		renderItem->Material = nullptr;
 		gNdcRenderItems.push_back(*renderItem);
 	}
